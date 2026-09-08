@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Forward normal commands as argv; only --shell requests shell interpretation.
+set -euo pipefail
+readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" CONTAINER=lancet-d4rl
+usage() { echo "usage: ./dev {status|start d4rl|stop d4rl|d4rl [--shell COMMAND|COMMAND ...]}" >&2; exit 2; }
+case "${1:-}" in
+  status) docker ps -a --filter 'name=^/lancet-d4rl$' --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}' ;;
+  start) [ "${2:-}" = d4rl ] && [ "$#" = 2 ] || usage; exec "$ROOT/docker/lancet-d4rl/run.sh" ;;
+  stop) [ "${2:-}" = d4rl ] && [ "$#" = 2 ] || usage; if [ "$(docker inspect -f '{{.State.Running}}' "$CONTAINER" 2>/dev/null || true)" = true ]; then docker stop "$CONTAINER"; fi ;;
+  d4rl)
+    shift
+    if [ "$(docker inspect -f '{{.State.Running}}' "$CONTAINER" 2>/dev/null || true)" != true ]; then echo "backend d4rl is not running; start it with: ./dev start d4rl" >&2; exit 1; fi
+    if [ "${1:-}" = --shell ]; then [ "$#" = 2 ] || usage; exec docker exec -e USER=lancet -e LOGNAME=lancet -e PATH=/opt/lancet-home/.local/bin:/opt/conda/envs/lancet-py310/bin:/usr/local/nvidia/bin:/usr/local/cuda/bin:/opt/conda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin -w /workspace/rl-garden "$CONTAINER" bash -lc "$2"; fi
+    [ "$#" -gt 0 ] || usage; exec docker exec -e USER=lancet -e LOGNAME=lancet -e PATH=/opt/lancet-home/.local/bin:/opt/conda/envs/lancet-py310/bin:/usr/local/nvidia/bin:/usr/local/cuda/bin:/opt/conda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin -w /workspace/rl-garden "$CONTAINER" "$@"
+    ;;
+  *) usage ;;
+esac
