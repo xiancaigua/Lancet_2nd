@@ -281,6 +281,27 @@ class OffPolicyAlgorithm(BaseAlgorithm):
             # Pre-phase-state checkpoints used absolute global-step thresholds.
             self._initial_phase_start_step = 0
 
+    def _run_evaluation(self, total_timesteps: int) -> None:
+        stime = time.perf_counter()
+        eval_metrics = self._evaluate()
+        if self.logger is not None:
+            self._log_eval_metrics(eval_metrics, self._global_step)
+            self.logger.add_scalar(
+                "time/eval_time", time.perf_counter() - stime, self._global_step
+            )
+        if self.std_log:
+            eval_return = self._first_metric(eval_metrics, ("return",))
+            eval_success = self._first_metric(
+                eval_metrics, ("success_at_end", "success_once")
+            )
+            print(
+                "[eval] "
+                f"step={self._global_step}/{total_timesteps} "
+                f"return={self._fmt_metric(eval_return)} "
+                f"success_at_end={self._fmt_metric(eval_success)}",
+                flush=True,
+            )
+
     # --- main loop ---
 
     def learn(self, total_timesteps: int) -> "OffPolicyAlgorithm":
@@ -296,6 +317,10 @@ class OffPolicyAlgorithm(BaseAlgorithm):
         # episode-mode iterations advance by a variable `collected_transitions`
         # instead, which can be many times larger or smaller than training_freq.
         previous_iteration_start = self._global_step
+        last_eval_step = -1
+        if self.eval_freq > 0:
+            self._run_evaluation(total_timesteps)
+            last_eval_step = self._global_step
 
         while self._global_step < total_timesteps:
             previous_step = self._global_step
@@ -306,25 +331,8 @@ class OffPolicyAlgorithm(BaseAlgorithm):
                 and previous_iteration_start // self.eval_freq
                 < self._global_step // self.eval_freq
             ):
-                stime = time.perf_counter()
-                eval_metrics = self._evaluate()
-                if self.logger is not None:
-                    self._log_eval_metrics(eval_metrics, self._global_step)
-                    self.logger.add_scalar(
-                        "time/eval_time", time.perf_counter() - stime, self._global_step
-                    )
-                if self.std_log:
-                    eval_return = self._first_metric(eval_metrics, ("return",))
-                    eval_success = self._first_metric(
-                        eval_metrics, ("success_at_end", "success_once")
-                    )
-                    print(
-                        "[eval] "
-                        f"step={self._global_step}/{total_timesteps} "
-                        f"return={self._fmt_metric(eval_return)} "
-                        f"success_at_end={self._fmt_metric(eval_success)}",
-                        flush=True,
-                    )
+                self._run_evaluation(total_timesteps)
+                last_eval_step = self._global_step
 
             # Rollout actions reach the env and the buffer -- no dropout here.
             self.policy.eval()
@@ -516,6 +524,9 @@ class OffPolicyAlgorithm(BaseAlgorithm):
 
             self._maybe_save_periodic_checkpoint(previous_step)
             previous_iteration_start = previous_step
+
+        if self.eval_freq > 0 and last_eval_step != self._global_step:
+            self._run_evaluation(total_timesteps)
 
         if self.checkpoint_dir is not None and self.save_final_checkpoint:
             self._save_checkpoint("final.pt")

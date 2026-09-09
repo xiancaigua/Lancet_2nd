@@ -8,6 +8,8 @@ Current state: [`../CURRENT_STATE.md`](../CURRENT_STATE.md)
 
 | Seq | Date | Topic | Status | File |
 |---|---|---|---|---|
+| 004 | 2026-09-09 | Current Lancet implementation | completed | [memory](2026-09-09_004_lancet-implementation.md) |
+| 003 | 2026-09-09 | Lancet specification finalized | completed | [memory](2026-09-09_003_lancet-specification-finalized.md) |
 | 002 | 2026-09-09 | Lancet v3 benchmark protocol | completed | [memory](2026-09-09_002_lancet-v3-benchmark-protocol.md) |
 | 001 | 2026-09-09 | Lancet v3 design frozen | completed | [memory](2026-09-09_001_lancet-v3-design-frozen.md) |
 | 008 | 2026-09-08 | Formal benchmark protocol drafted | completed | [memory](2026-09-08_008_formal-benchmark-protocol-drafted.md) |
@@ -39,6 +41,10 @@ was not independently recorded.
 - [Runtime access and dev wrapper](2026-09-07_003_runtime-access-and-dev-wrapper.md)
 
 ### Lancet
+
+- [Current Lancet implementation](2026-09-09_004_lancet-implementation.md)
+
+- [Lancet specification finalized](2026-09-09_003_lancet-specification-finalized.md)
 
 - [Lancet v3 design frozen](2026-09-09_001_lancet-v3-design-frozen.md)
 - [Lancet residual scaffold](2026-09-07_004_lancet-residual-scaffold.md)

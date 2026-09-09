@@ -1,5 +1,5 @@
-# Current Lancet online branch. Load the seed-matched shared WSRL
-# offline_final.pt on the CLI; do not run independent Lancet pretraining.
+# Lancet V1 paper-run template: WSRL AntMaze-Medium-Play baseline plus only
+# the shared critic residual. Keep the same offline/online budget for fairness.
 env_backend: d4rl_legacy
 dataset_backend: d4rl_legacy
 env_id: antmaze-medium-play-v2
@@ -7,13 +7,11 @@ offline_dataset: antmaze-medium-play-v2
 obs_mode: state
 num_envs: 1
 num_eval_envs: 1
-num_offline_steps: 0
+num_offline_steps: 1000000
 num_online_steps: 500000
 utd: 4.0
 batch_size: 1024
 buffer_size: 1000000
-learning_starts: 0
-training_freq: 64
 reward_scale: 10.0
 reward_bias: -5.0
 sparse_reward_mc: true
@@ -44,25 +42,17 @@ alpha_lr: 0.0001
 cql_alpha_lr: 0.0003
 policy_frequency: 1
 target_network_frequency: 1
-offline_eval_freq: null
+offline_eval_freq: 50000
 online_eval_freq: 2000
 eval_freq: 0
 num_eval_steps: 20000
-num_eval_episodes: 20
-checkpoint_freq: 25000
 capture_video: false
 log_type: wandb
 seed: 0
-lancet_variant: lancet
-residual_hidden_dim: 128
+use_lancet: true
+residual_hidden_dim: 256
 residual_hidden_layers: 2
-residual_lr: 0.001
-residual_fit_coef: 1.0
-residual_small_coef: 0.0001
-local_action_count: 8
-local_action_noise_scale: 0.1
-uncertainty_beta: 1.0
-uncertainty_ema_decay: 0.99
-uncertainty_weight_max: 3.0
-uncertainty_eps: 1.0e-8
-handoff_window_steps: 50000
+residual_lr: 0.0003
+lambda_td_residual: 1.0
+lambda_u_variation: 0.0
+lambda_residual_reg: 0.0001

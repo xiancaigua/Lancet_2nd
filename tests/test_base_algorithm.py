@@ -159,3 +159,27 @@ def test_evaluate_aliases_success_to_success_at_end():
 
     assert metrics["success_at_end"] == pytest.approx(0.5)
     assert "success" not in metrics
+
+
+class _SeedRecordingEvalEnv(_PartialDoneEvalEnv):
+    def __init__(self) -> None:
+        super().__init__(
+            returns=torch.tensor([1.0, 1.0]),
+            done_mask=torch.tensor([True, True]),
+        )
+        self.seeds: list[int | None] = []
+
+    def reset(self, seed: int | None = None):
+        self.seeds.append(seed)
+        return super().reset(seed=seed)
+
+
+def test_evaluation_uses_isolated_incrementing_seed_and_checkpoints_counter():
+    eval_env = _SeedRecordingEvalEnv()
+    algo = _algo(eval_env)
+
+    algo._evaluate()
+    algo._evaluate()
+
+    assert eval_env.seeds == [10_000_020, 10_000_021]
+    assert algo.state_dict()["training_state"]["evaluation_count"] == 2

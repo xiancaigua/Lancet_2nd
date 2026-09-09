@@ -49,6 +49,7 @@ class BaseAlgorithm(ABC):
         self.seed = seed
         self.device = get_device(device)
         self.logger = logger
+        self._evaluation_count = 0
 
         seed_everything(seed)
         self._global_step = 0
@@ -167,11 +168,23 @@ class BaseAlgorithm(ABC):
 
     # --- evaluation ---
 
+    def _reset_eval_env(self):
+        """Reset evaluation from an isolated, reproducible seed stream."""
+        if self.eval_env is None:
+            raise RuntimeError("Evaluation environment is not configured.")
+        eval_seed = int(self.seed) + 10_000_019 + self._evaluation_count
+        self._evaluation_count += 1
+        try:
+            return self.eval_env.reset(seed=eval_seed)
+        except TypeError:
+            # Compatibility for legacy custom environments without seed=.
+            return self.eval_env.reset()
+
     def _evaluate(self) -> dict[str, float]:
         if self.eval_env is None:
             return {}
         self.policy.eval()
-        obs, _ = self.eval_env.reset()
+        obs, _ = self._reset_eval_env()
         self._eval_start_hook()
         metrics: dict[str, list[torch.Tensor]] = defaultdict(list)
         for _ in range(self.num_eval_steps):
@@ -234,10 +247,10 @@ class BaseAlgorithm(ABC):
         del state
 
     def _training_state_dict(self) -> dict[str, Any]:
-        return {}
+        return {"evaluation_count": self._evaluation_count}
 
     def _load_training_state_dict(self, state: dict[str, Any]) -> None:
-        del state
+        self._evaluation_count = int(state.get("evaluation_count", 0))
 
     @property
     def global_update(self) -> int:

@@ -1,53 +1,45 @@
-# Known Issues and Next Steps
+# Known issues and next steps
 
-## P0 — v3 implementation and validation gates
+## P0 — validation gates before formal work
 
-1. Human-review `docs/design/lancet-v3-implementation.md`, its Theory–Code
-   Alignment table, and
-   `experiments/protocols/antmaze_wsrl_lancet_v3.md`.
-2. Implement a new `lancet_v3` identity: shared residual backbone with
-   critic-aligned heads, exact-zero output, K=8 local-action centering,
-   per-critic detached TD-residual targets, and optional detached U weighting.
-   Preserve the executable `lancet` identity as Legacy Lancet-TD.
-3. Add the focused v3 unit tests, then run one archived tiny real-data smoke.
-   Existing legacy Lancet tests and smoke evidence do not validate v3.
-4. Apply the bounded protocol-enablement patches: shared offline-initializer
-   and online-fork configs, deterministic evaluation seed, forced final
-   endpoint, required diagnostics, selected-GPU/peak-memory and checkpoint
-   lineage metadata, and periodic checkpoint cadence.
-5. Review and commit/push a clean frozen revision, then run the archived v3
-   seed-0 stability pilot. Formal remains blocked until every gate passes.
+1. Create a clean implementation commit after final diff/review.
+2. Run one archived shared-checkpoint AntMaze tiny smoke for current Lancet.
+3. Run the archived seed-0 20k WSRL/Lancet stability pilot.
+4. Inspect finite losses, Q/Delta/U/weights, correction ratios, evaluation,
+   GPU memory, and checkpoint reload before issuing formal readiness.
 
-## P1 — scientific decisions and empirical checks
+Formal training remains unauthorized until these gates pass.
 
-1. Confirm after the v3 stability pilot—not before—whether K=8, perturbation
-   scale 0.1, U-weight cap 3, residual LR 1e-3, regularizer 1e-4, and the 50k
-   linear correction window remain frozen for formal work.
-2. Treat observed-action centered TD fitting as a practical projection; its
-   relationship to an oracle counterfactual projection is an empirical theory
-   question, not a proven implementation property.
-3. Keep action-wise Q/residual rank diagnostics optional for phase 2. They are
-   useful mechanism evidence but are not a blocker for the first v3 pilot.
-4. Choose operational destinations such as WandB/ExpNote before formal runs;
-   no secret or workspace identifier should be committed.
+## P1 — benchmark operations
 
-Lancet v3 no longer has an undefined `lambda_u_variation` loss. It defines
-`U_N(s)` as a detached state weight on residual fitting only. The old
-`lambda_u_variation=0` statement applies to the Legacy Lancet-TD scaffold and
-must not be carried into the v3 implementation.
+1. Freeze five seed-specific WSRL 1M offline initializer configs and hashes.
+2. Verify the common actual endpoint, adaptation-coordinate AUC analysis, and
+   deterministic evaluation stream on pilot archives.
+3. Freeze the shared commit/config/dataset lineage and empty formal roots.
+4. Schedule the 10-run WSRL-vs-Lancet main table; schedule Raw/Centered
+   component ablations afterward without outcome-based selection.
 
-## P2 — non-blocking environment issues
+## P2 — empirical research questions
 
-1. D4RL warns about optional Flow, CARLA, GymBullet/pkg_resources, X11, and
-   legacy Gym deprecations. AntMaze validation passes; do not install unrelated
-   backends merely to silence warnings.
-2. Kitchen reset works but its dataset is not locally archived/validated.
-3. `gh` is absent, while GitHub SSH authentication works. CLI installation is
-   unnecessary unless a future workflow explicitly needs it.
+- Whether replay-action supervision plus action centering approximates the
+  oracle local-action correction sufficiently.
+- Whether REDQ U weighting improves Centered Residual.
+- Whether K=8, sigma=.1, and the 50k active window transfer beyond
+  `antmaze-medium-play-v2`.
+- Optional action-wise rank/variation diagnostics for mechanism analysis.
 
-## Current recommendation
+These are experiment questions, not invitations to change the frozen objective
+after seeing results.
 
-The runtime, archive workflow, audits, and historical WSRL/Legacy-Lancet tiny
-smokes are operational. The code-ready v3 design and benchmark protocol are
-now drafted, but v3 itself is not implemented. The next approved action is a
-small, reviewable v3 implementation plus unit tests—not any training run.
+## Non-blocking environment notes
+
+- D4RL import emits legacy Gym/optional-backend warnings; AntMaze data/env
+  audits passed.
+- Kitchen dataset validation is not required for the first AntMaze benchmark.
+- Long runs must use Host tmux/scheduler around the archive launcher.
+
+## Current decision
+
+The current Lancet implementation and focused tests exist in the working tree.
+Formal readiness is still pending real-data tiny smoke and the seed-0 20k
+stability pilot. No formal run has started.

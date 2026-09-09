@@ -39,3 +39,15 @@ def test_archive_paths_map_only_below_data_root(tmp_path, monkeypatch):
     )
     with pytest.raises(SystemExit, match="escaped data root"):
         archive._container_path(tmp_path.parent / "outside")
+
+
+def test_parse_json_output_accepts_legacy_import_notice_prefix():
+    payload = archive._parse_json_output('legacy warning\n{"status": "materialized"}\n')
+    assert payload == {"status": "materialized"}
+
+
+def test_parse_json_output_rejects_missing_or_trailing_non_json():
+    with pytest.raises(ValueError, match="no complete JSON"):
+        archive._parse_json_output("legacy warning only")
+    with pytest.raises(ValueError, match="no complete JSON"):
+        archive._parse_json_output('{"ok": true}\ntrailing warning')

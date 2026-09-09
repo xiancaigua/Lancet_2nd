@@ -78,6 +78,19 @@ def _write_json(path: Path, value: object) -> None:
     )
 
 
+def _parse_json_output(output: str) -> dict:
+    """Extract one JSON object from stdout polluted by legacy import notices."""
+    decoder = json.JSONDecoder()
+    for match in re.finditer(r"(?m)^\{", output):
+        try:
+            value, end = decoder.raw_decode(output[match.start() :])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict) and not output[match.start() + end :].strip():
+            return value
+    raise json.JSONDecodeError("no complete JSON object in stdout", output, 0)
+
+
 def _hardware() -> list[str]:
     result = subprocess.run(
         ["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader"],
@@ -128,6 +141,10 @@ def _readme(args: argparse.Namespace, metadata: dict, exact_command: str) -> str
 ## Algorithm
 
 {args.algorithm}
+
+## Method label
+
+{metadata["method_label"]}
 
 ## Environment
 
@@ -246,11 +263,13 @@ def _next_memory_sequence(date: str) -> int:
 def _update_memory(metadata: dict, returncode: int, checkpoints: list[Path]) -> Path:
     date = dt.datetime.now().astimezone().strftime("%Y-%m-%d")
     seq = _next_memory_sequence(date)
-    slug = f"{metadata['algorithm']}-{metadata['environment']}-{metadata['run_type']}"
+    slug = (
+        f"{metadata['method_label']}-{metadata['environment']}-{metadata['run_type']}"
+    )
     path = REPO / ".agents/lancet/memory" / f"{date}_{seq:03d}_{slug}.md"
     result = "passed" if returncode == 0 else "failed"
     path.write_text(
-        f"""# Agent Memory: {metadata["algorithm"]} {metadata["run_type"]}
+        f"""# Agent Memory: {metadata["method_label"]} {metadata["run_type"]}
 
 - Date: {date}
 - Sequence: {seq:03d}
@@ -298,14 +317,14 @@ Open `{metadata["output_dir"]}/analysis.md` first.
     index = REPO / ".agents/lancet/memory/INDEX.md"
     text = index.read_text(encoding="utf-8")
     row = (
-        f"| {seq:03d} | {date} | {metadata['algorithm']} {metadata['run_type']} | "
+        f"| {seq:03d} | {date} | {metadata['method_label']} {metadata['run_type']} | "
         f"{'completed' if returncode == 0 else 'blocked'} | [memory]({path.name}) |"
     )
     marker = "|---|---|---|---|---|\n"
     if row not in text:
         text = text.replace(marker, marker + row + "\n", 1)
     topic = "### Dataset / experiments\n"
-    link = f"- [{metadata['algorithm']} {metadata['run_type']}]({path.name})\n"
+    link = f"- [{metadata['method_label']} {metadata['run_type']}]({path.name})\n"
     if link not in text:
         text = text.replace(topic, topic + "\n" + link, 1)
     index.write_text(text, encoding="utf-8")
@@ -324,7 +343,7 @@ def _update_current_state(metadata: dict) -> None:
     )
     heading = "## Latest archived experiments\n"
     bullet = (
-        f"- `{metadata['experiment_id']}`: {metadata['algorithm']} "
+        f"- `{metadata['experiment_id']}`: {metadata['method_label']} "
         f"{metadata['run_type']} -> {metadata['status']} (`{metadata['output_dir']}`)\n"
     )
     if heading not in text:
@@ -343,7 +362,7 @@ def _update_handoff_index(metadata: dict) -> None:
     if metadata["run_type"] == "formal":
         marker = "<!-- formal-rows -->"
         row = (
-            f"| {metadata['environment']} | {metadata['algorithm']} | {metadata['seed']} | "
+            f"| {metadata['environment']} | {metadata['method_label']} | {metadata['seed']} | "
             f"{metadata['status']} | not collected | `{output}` |"
         )
     else:
@@ -361,8 +380,19 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run-type", required=True, choices=RUN_TYPES)
     parser.add_argument("--algorithm", required=True)
+    parser.add_argument(
+        "--method-label",
+        default=None,
+        help="Archive label when multiple methods share one registry algorithm.",
+    )
     parser.add_argument("--environment", required=True)
     parser.add_argument("--seed", required=True, type=int)
+    parser.add_argument(
+        "--gpu-id",
+        type=int,
+        default=None,
+        help="Expose one physical GPU to the container command as logical cuda:0.",
+    )
     parser.add_argument("--config", required=True, type=Path)
     parser.add_argument("--purpose", required=True)
     parser.add_argument("--hypothesis", required=True)
@@ -381,6 +411,7 @@ def main() -> int:
     args = parser.parse_args()
 
     args.algorithm = _safe_segment(args.algorithm, "algorithm")
+    method_label = _safe_segment(args.method_label or args.algorithm, "method-label")
     args.environment = _safe_segment(args.environment, "environment")
     config = args.config if args.config.is_absolute() else REPO / args.config
     config = config.resolve()
@@ -402,7 +433,7 @@ def main() -> int:
         / "runs"
         / args.run_type
         / args.environment
-        / args.algorithm
+        / method_label
         / f"seed_{args.seed}",
         experiment_id,
     )
@@ -412,7 +443,7 @@ def main() -> int:
         / "checkpoints"
         / args.run_type
         / args.environment
-        / args.algorithm
+        / method_label
         / f"seed_{args.seed}"
         / experiment_id
     )
@@ -426,30 +457,36 @@ def main() -> int:
     training_args = args.training_args
     if training_args and training_args[0] == "--":
         training_args = training_args[1:]
-    command = [
-        "./dev",
-        "d4rl",
-        "python",
-        "examples/train_off2on.py",
-        args.algorithm,
-        "--config",
-        str(config_rel),
-        "--log_dir",
-        container_output,
-        "--checkpoint_dir",
-        container_checkpoint,
-        "--exp_name",
-        "train",
-        "--seed",
-        str(args.seed),
-        *training_args,
-    ]
+    command = ["./dev", "d4rl"]
+    if args.gpu_id is not None:
+        if args.gpu_id < 0:
+            raise SystemExit("--gpu-id must be non-negative.")
+        command.extend(["env", f"CUDA_VISIBLE_DEVICES={args.gpu_id}"])
+    command.extend(
+        [
+            "python",
+            "examples/train_off2on.py",
+            args.algorithm,
+            "--config",
+            str(config_rel),
+            "--log_dir",
+            container_output,
+            "--checkpoint_dir",
+            container_checkpoint,
+            "--exp_name",
+            "train",
+            "--seed",
+            str(args.seed),
+            *training_args,
+        ]
+    )
     exact_command = shlex.join(command)
 
     metadata = {
         "experiment_id": experiment_id,
         "run_type": args.run_type,
         "algorithm": args.algorithm,
+        "method_label": method_label,
         "environment": args.environment,
         "seed": args.seed,
         "purpose": args.purpose,
@@ -458,6 +495,7 @@ def main() -> int:
         "git_dirty": dirty,
         "git_diff_path": "git.diff" if dirty and args.run_type == "formal" else None,
         "hardware": _hardware(),
+        "gpu_id": args.gpu_id,
         "start_time": None,
         "end_time": None,
         "status": "prepared",
@@ -474,11 +512,14 @@ def main() -> int:
 
     shutil.copy2(config, output_dir / "config.yaml")
     (output_dir / "command.txt").write_text(exact_command + "\n", encoding="utf-8")
-    print_command = [*command, "--print-config"]
-    resolved = _run(print_command)
+    resolve_command = [*command, "--dry-run"]
+    resolved = _run(resolve_command)
     try:
-        resolved_json = json.loads(resolved.stdout)
+        resolved_json = _parse_json_output(resolved.stdout)
     except json.JSONDecodeError as exc:
+        (output_dir / "config_resolution.stdout").write_text(
+            resolved.stdout, encoding="utf-8"
+        )
         (output_dir / "config_resolution.stderr").write_text(
             resolved.stderr, encoding="utf-8"
         )

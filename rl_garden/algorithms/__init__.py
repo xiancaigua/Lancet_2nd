@@ -21,7 +21,8 @@ from rl_garden.algorithms.hilp import HILP
 from rl_garden.algorithms.idql import IDQL
 from rl_garden.algorithms.iql import IQL
 from rl_garden.algorithms.jsrl import JSRL
-from rl_garden.algorithms.lancet import Lancet, ResidualQNetwork
+from rl_garden.algorithms.lancet import Lancet, ResidualEnsemble
+from rl_garden.algorithms.lancet_v1 import LancetV1, ResidualQNetworkV1
 from rl_garden.algorithms.offline import (
     OfflineEnvSpec,
     OfflinePretrainResult,
@@ -90,6 +91,7 @@ __all__ = [
     "IQL",
     "JSRL",
     "Lancet",
+    "LancetV1",
     "OfflineEnvSpec",
     "OfflinePretrainResult",
     "OfflineRLAlgorithm",
@@ -111,7 +113,8 @@ __all__ = [
     "RecurrentSAC",
     "RLPD",
     "RLPDHybrid",
-    "ResidualQNetwork",
+    "ResidualEnsemble",
+    "ResidualQNetworkV1",
     "SAC",
     "SACFlow",
     "SequencePPO",

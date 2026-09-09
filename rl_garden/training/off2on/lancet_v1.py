@@ -1,4 +1,4 @@
-"""Lancet offline-to-online registration (flat state observations)."""
+"""Lancet V1 offline-to-online registration (state observations in v1)."""
 
 from dataclasses import dataclass
 from typing import Literal
@@ -13,8 +13,8 @@ from rl_garden.training.off2on._registry import registry
 
 
 @dataclass
-class LancetOff2OnArgs(VisionWSRLTrainingArgs, EnvBackendArgs):
-    """Current Lancet and its capacity-matched residual ablations."""
+class LancetV1Off2OnArgs(VisionWSRLTrainingArgs, EnvBackendArgs):
+    """Lancet V1 critic correction; it is intentionally flat-state only."""
 
     obs_mode: str = "state"
     hidden_dim: int = 256
@@ -23,28 +23,21 @@ class LancetOff2OnArgs(VisionWSRLTrainingArgs, EnvBackendArgs):
     target_entropy: float | str = "auto"
     num_eval_episodes: int | None = None
     bootstrap_at_done: Literal["always", "never", "truncated"] = "always"
-    lancet_variant: Literal["raw", "centered", "lancet"] = "lancet"
-    residual_hidden_dim: int = 128
+    use_lancet: bool = True
+    residual_hidden_dim: int = 256
     residual_hidden_layers: int = 2
-    residual_lr: float = 1e-3
-    residual_fit_coef: float = 1.0
-    residual_small_coef: float = 1e-4
-    local_action_count: int = 8
-    local_action_noise_scale: float = 0.1
-    uncertainty_beta: float = 1.0
-    uncertainty_ema_decay: float = 0.99
-    uncertainty_weight_max: float = 3.0
-    uncertainty_eps: float = 1e-8
-    handoff_window_steps: int = 50_000
-    residual_init_seed_offset: int = 1_000_003
-    local_action_seed_offset: int = 2_000_003
+    residual_lr: float = 3e-4
+    lambda_td_residual: float = 1.0
+    # Explicitly disabled until Lancet's U-variation equation is specified.
+    lambda_u_variation: float = 0.0
+    lambda_residual_reg: float = 1e-4
 
 
-def build_lancet(args: LancetOff2OnArgs, env, eval_env, logger, checkpoint_dir):
-    from rl_garden.algorithms import Lancet
+def build_lancet_v1(args: LancetV1Off2OnArgs, env, eval_env, logger, checkpoint_dir):
+    from rl_garden.algorithms.lancet_v1 import LancetV1
 
     agent = construct_agent(
-        Lancet,
+        LancetV1,
         env=env,
         eval_env=eval_env,
         buffer_size=args.buffer_size,
@@ -113,21 +106,13 @@ def build_lancet(args: LancetOff2OnArgs, env, eval_env, logger, checkpoint_dir):
         sparse_reward_mc=args.sparse_reward_mc,
         sparse_negative_reward=args.sparse_negative_reward,
         success_threshold=args.success_threshold,
-        lancet_variant=args.lancet_variant,
+        use_lancet=args.use_lancet,
         residual_hidden_dim=args.residual_hidden_dim,
         residual_hidden_layers=args.residual_hidden_layers,
         residual_lr=args.residual_lr,
-        residual_fit_coef=args.residual_fit_coef,
-        residual_small_coef=args.residual_small_coef,
-        local_action_count=args.local_action_count,
-        local_action_noise_scale=args.local_action_noise_scale,
-        uncertainty_beta=args.uncertainty_beta,
-        uncertainty_ema_decay=args.uncertainty_ema_decay,
-        uncertainty_weight_max=args.uncertainty_weight_max,
-        uncertainty_eps=args.uncertainty_eps,
-        handoff_window_steps=args.handoff_window_steps,
-        residual_init_seed_offset=args.residual_init_seed_offset,
-        local_action_seed_offset=args.local_action_seed_offset,
+        lambda_td_residual=args.lambda_td_residual,
+        lambda_u_variation=args.lambda_u_variation,
+        lambda_residual_reg=args.lambda_residual_reg,
         seed=args.seed,
         logger=logger,
         std_log=args.std_log,
@@ -145,10 +130,10 @@ def build_lancet(args: LancetOff2OnArgs, env, eval_env, logger, checkpoint_dir):
     return agent
 
 
-def run_lancet(args: LancetOff2OnArgs) -> None:
+def run_lancet_v1(args: LancetV1Off2OnArgs) -> None:
     from rl_garden.training.off2on._runner import run_off2on
 
-    run_off2on(args, build_agent=build_lancet, algorithm="lancet")
+    run_off2on(args, build_agent=build_lancet_v1, algorithm="lancet_v1")
 
 
-registry.register("lancet", LancetOff2OnArgs, run_lancet)
+registry.register("lancet_v1", LancetV1Off2OnArgs, run_lancet_v1)

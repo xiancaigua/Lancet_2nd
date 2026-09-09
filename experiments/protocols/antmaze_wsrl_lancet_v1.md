@@ -1,12 +1,12 @@
 # Legacy AntMaze WSRL vs Lancet-TD Benchmark Protocol v1
 
-Status: **legacy planned protocol; never started; superseded by `antmaze_wsrl_lancet_v3.md`**
+Status: **legacy planned protocol; never started; superseded by `antmaze_wsrl_lancet.md`**
 Protocol date: 2026-09-08  
 Protocol scope: first-stage `antmaze-medium-play-v2` comparison only
 
 > Historical note: this document describes the executable 2026-09-08
 > shared-scalar Raw-Residual scaffold. It is retained for traceability, not as
-> the implementation or benchmark contract for Lancet v3.
+> the implementation or benchmark contract for current Lancet.
 
 ## Research question and method names
 
@@ -22,9 +22,9 @@ The two compared methods are:
 - **Lancet-TD**: WSRL plus the current shared TD-residual critic correction,
   with `lambda_u_variation: 0.0`.
 
-This is explicitly **Legacy Lancet-TD / Lancet w/o U**, not Lancet v3. At the
+This is explicitly **Legacy Lancet-TD / Lancet w/o U**, not current Lancet. At the
 time of this protocol the legacy `lambda_u_variation` loss had no approved
-definition and was intentionally disabled. Lancet v3 subsequently defines U
+definition and was intentionally disabled. current Lancet defines U
 as a detached fitting weight rather than an independent loss; that newer
 design does not retroactively change this protocol.
 
@@ -493,6 +493,6 @@ Only after every item is checked may the formal launcher be used.
 ## Historical scope boundary
 
 This legacy protocol intentionally left its `lambda_u_variation` loss
-undefined and disabled. Lancet v3 supersedes that concept with detached U
-weighting of centered per-critic TD-residual fitting. The v3 design and
+undefined and disabled. current Lancet supersedes that concept with detached U
+weighting of centered per-critic TD-residual fitting. The current design and
 protocol are authoritative for future implementation and experiments.

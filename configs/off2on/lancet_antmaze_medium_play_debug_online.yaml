@@ -1,5 +1,5 @@
-# Current Lancet online branch. Load the seed-matched shared WSRL
-# offline_final.pt on the CLI; do not run independent Lancet pretraining.
+# Seed-0 current Lancet online stability branch. Load the same debug WSRL
+# offline_final.pt used by the WSRL branch.
 env_backend: d4rl_legacy
 dataset_backend: d4rl_legacy
 env_id: antmaze-medium-play-v2
@@ -8,12 +8,14 @@ obs_mode: state
 num_envs: 1
 num_eval_envs: 1
 num_offline_steps: 0
-num_online_steps: 500000
+num_online_steps: 20000
 utd: 4.0
 batch_size: 1024
 buffer_size: 1000000
 learning_starts: 0
 training_freq: 64
+gamma: 0.99
+tau: 0.005
 reward_scale: 10.0
 reward_bias: -5.0
 sparse_reward_mc: true
@@ -30,6 +32,7 @@ critic_use_layer_norm: true
 backup_entropy: false
 target_entropy: 0.0
 use_cql_loss: true
+use_calql: true
 cql_alpha: 5.0
 cql_autotune_alpha: true
 cql_target_action_gap: 0.8
@@ -49,9 +52,12 @@ online_eval_freq: 2000
 eval_freq: 0
 num_eval_steps: 20000
 num_eval_episodes: 20
-checkpoint_freq: 25000
+checkpoint_freq: 5000
+save_final_checkpoint: true
+save_replay_buffer: false
 capture_video: false
-log_type: wandb
+log_type: tensorboard
+log_freq: 1000
 seed: 0
 lancet_variant: lancet
 residual_hidden_dim: 128

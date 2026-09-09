@@ -181,7 +181,7 @@ def test_episode_mode_eval_fires_when_boundary_is_outside_a_training_freq_window
 
     # Iteration 1 spans [0, 20) and crosses the eval_freq=15 boundary; that
     # crossing is detected at the top of iteration 2 (global_step=20 there).
-    assert eval_calls == [20]
+    assert eval_calls == [0, 20, 40]
 
 
 def test_policy_is_in_eval_mode_during_rollout_collection(monkeypatch):
@@ -348,3 +348,20 @@ def test_learning_has_started_seeded_from_global_step_not_always_false(monkeypat
 
     assert seen_flags
     assert seen_flags[0] is True
+
+
+def test_fixed_step_final_eval_uses_first_common_actual_step_at_or_above_budget(
+    monkeypatch,
+):
+    env = _ScriptedVecEnv(episode_len=[1_000, 1_000])
+    agent = _agent(env, eval_freq=100, num_eval_steps=1)
+    _stub_train(agent, monkeypatch)
+    eval_calls: list[int] = []
+    monkeypatch.setattr(
+        agent, "_evaluate", lambda: eval_calls.append(agent._global_step) or {}
+    )
+
+    agent.learn(total_timesteps=5)
+
+    assert agent._global_step == 8
+    assert eval_calls == [0, 8]

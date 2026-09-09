@@ -257,7 +257,7 @@ def run_exact_episode_eval(
     if agent.eval_env is None:
         return {}
     agent.policy.eval()
-    obs, _ = agent.eval_env.reset()
+    obs, _ = agent._reset_eval_env()
     agent._eval_start_hook()
 
     metrics: dict[str, list[torch.Tensor]] = defaultdict(list)

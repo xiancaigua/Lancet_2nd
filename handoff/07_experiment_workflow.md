@@ -3,14 +3,13 @@
 ## Current protocol identities
 
 The current planned scientific entry point is
-[`experiments/protocols/antmaze_wsrl_lancet_v3.md`](../experiments/protocols/antmaze_wsrl_lancet_v3.md).
-It covers WSRL, capacity-matched Raw and Centered residual ablations, and Full
-Lancet v3 on `antmaze-medium-play-v2`. It is a pre-registered design: v3 is not
-implemented and no v3 pilot or formal run has started.
+[`experiments/protocols/antmaze_wsrl_lancet.md`](../experiments/protocols/antmaze_wsrl_lancet.md).
+It covers WSRL, capacity-matched Raw and Centered residual ablations, and
+current Lancet on `antmaze-medium-play-v2`. The implementation exists in the working tree, but no current-Lancet pilot or formal run has started.
 
 [`antmaze_wsrl_lancet_v1.md`](../experiments/protocols/antmaze_wsrl_lancet_v1.md)
-is retained only as the never-executed Legacy Lancet-TD/shared-scalar protocol.
-It must not be used as the contract or evidence for v3.
+is retained only as the never-executed Lancet V1 shared-scalar protocol.
+It must not be used as the contract or evidence for current Lancet.
 
 Every smoke, debug, or formal run must be launched through
 `scripts/experiments/archive_run.py` on the Host. The experiment directory is
@@ -27,7 +26,7 @@ The launcher validates run-type intent, generates only paths under the matching
 root, verifies those paths in rl-garden's resolved config, rejects non-smoke
 configs for smoke, rejects smoke configs for formal, and requires a clean Git
 tree for formal unless an explicit dirty-run override captures `git.diff`.
-The v3 protocol is stricter: formal runs may not use that override.
+The current protocol is stricter: formal runs may not use that override.
 
 ## Required order
 
@@ -92,19 +91,18 @@ Nine older setup/test/download logs lacked pre-run intent/config/metadata.
 They remain preserved under `runs/legacy_unclassified/`; none was relabeled
 formal. No existing checkpoint required classification.
 
-## V3 implementation-to-benchmark gates
+## Lancet implementation-to-benchmark gates
 
 The required order is:
 
-1. human review of `docs/design/lancet-v3-implementation.md` and the v3
-   protocol;
-2. implement `lancet_v3` plus focused unit tests without changing WSRL's base
+1. human review of `docs/design/lancet-implementation.md` and the current protocol;
+2. validate `lancet` with focused and regression tests without changing WSRL's base
    target or critic update;
-3. run one archived tiny real-data v3 smoke;
-4. add/review shared-initializer and online-fork configs, deterministic eval
-   seed, forced endpoint evaluation, diagnostics, GPU/lineage metadata, and
+3. run one archived tiny real-data Lancet smoke;
+4. review shared-initializer and online-fork configs, deterministic eval
+   seed, common actual endpoint evaluation, diagnostics, lineage metadata, and
    periodic checkpoint cadence;
-5. run the archived seed-0 debug pilot from the v3 protocol;
+5. run the archived seed-0 debug pilot from the current protocol;
 6. freeze a clean pushed commit and only then authorize formal execution.
 
-Do not run the legacy v1 pilot as a substitute for v3 validation.
+Do not run the Lancet V1 pilot as a substitute for current Lancet validation.

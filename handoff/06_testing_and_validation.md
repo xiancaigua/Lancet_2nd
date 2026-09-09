@@ -1,27 +1,44 @@
 # Testing and Validation
 
-Only commands actually run are listed.
+Only commands actually run are listed. Current Lancet unit/regression evidence
+is kept separate from historical Lancet V1 runtime evidence.
+
+## Current implementation checks (2026-09-09)
 
 | Command | Result |
 |---|---|
-| `./dev d4rl bash scripts/smoke_lancet.sh` | 6 tests passed; registry/config preflight passed |
-| `./dev d4rl python -m pytest -q tests/test_wsrl.py` | 55 passed |
-| `./dev d4rl python -m pytest -q tests/test_off2on_runner.py` | 19 passed |
-| focused D4RL env/dataset pytest | 19 passed |
-| `./dev d4rl python -m pytest -q tests/test_lancet_experiment_archive.py` | 3 passed |
-| `scripts/audit/run_all.sh` | all audits passed; Lancet audit set 7 passed |
-| final ruff check on new Python tools/tests | passed |
-| combined Lancet/archive pytest selection | 10 passed |
+| focused current/legacy/registry selection | 47 passed, 1 warning |
+| base evaluation and off-policy endpoint tests | 17 passed |
+| Lancet + SAC/CQL/WSRL/off2on/checkpoint regression selection | 211 passed, 8 warnings |
+| WSRL, Lancet, and Lancet V1 `--dry-run` construction | passed |
+| shared initializer/online/debug config preflights | passed |
 
-The audit suite verifies:
+The current suite verifies exact-zero fork equality, per-critic shapes,
+action-centering, pairwise/efficient U equivalence (including N=2), first-batch
+EMA initialization, single-target reuse after the base critic step, actor and
+optimizer gradient isolation, unchanged WSRL target semantics, offline/warmup/
+50k lifecycle gates, four residual updates per UTD=4 unit, WSRL checkpoint
+forking, Lancet round-trip, isolated evaluation seeds, and final evaluation at
+the first actual rollout step at or above the nominal budget.
 
-- container/Python/Torch/CUDA/GPU/`rl_garden` runtime;
-- bidirectional Host/container bind-mount behavior and cleanup;
-- D4RL import, AntMaze reset/action space, required dataset keys, exactly
-  1,000,000 transitions, and finite observations/actions/rewards;
-- Lancet registry/config, residual/corrected-Q shapes, one finite update,
-  nonzero residual parameter delta, safe `lambda_u_variation=0`, checkpoint
-  residual state/optimizer presence, and reload equality.
+## Environment/audit evidence
 
-Archived WSRL smoke `20260908_123022` loaded 1M transitions, completed 2 offline and 4 online updates, changed actor/critic/target tensors, saved eight checkpoints, and reloaded `final.pt`. Archived Lancet smoke `20260908_123802` additionally recorded finite residual losses, positive offline and online residual deltas, all required TensorBoard tags, residual optimizer state, and successful reload. Its four-step episodic return/success are not collected (printed as `nan` because no episode ended), while losses and saved tensors are finite.
-Kitchen environment reset was previously verified; its dataset was not fetched.
+Earlier audit runs verified container/Python/Torch/CUDA/GPU visibility,
+bidirectional bind mounts, `rl_garden`, D4RL AntMaze reset/action space, all
+required dataset keys, exactly 1,000,000 transitions, finite dataset arrays,
+and checkpoint infrastructure. Legacy optional D4RL backend warnings (Flow,
+CARLA, GymBullet, headless GLFW) do not affect the verified AntMaze path.
+
+## Historical runtime evidence
+
+- WSRL archive `20260908_123022` loaded the 1M dataset and completed its tiny
+  offline-to-online path with checkpoint reload.
+- Archive `20260908_123802` exercised the old shared-scalar implementation and
+  is therefore **Lancet V1**, not evidence for current Lancet.
+
+## Pending runtime gates
+
+- Current Lancet archived real-data tiny smoke: not yet run.
+- Shared seed-0 20k WSRL/Lancet stability pilot: not yet run.
+- Formal benchmark: not started and not authorized.
+- Kitchen dataset: not fetched; not a blocker for the first AntMaze study.

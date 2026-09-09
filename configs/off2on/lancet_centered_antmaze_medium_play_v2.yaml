@@ -1,4 +1,4 @@
-# Current Lancet online branch. Load the seed-matched shared WSRL
+# Centered Residual component-ablation online branch. Load the seed-matched shared WSRL
 # offline_final.pt on the CLI; do not run independent Lancet pretraining.
 env_backend: d4rl_legacy
 dataset_backend: d4rl_legacy
@@ -53,7 +53,7 @@ checkpoint_freq: 25000
 capture_video: false
 log_type: wandb
 seed: 0
-lancet_variant: lancet
+lancet_variant: centered
 residual_hidden_dim: 128
 residual_hidden_layers: 2
 residual_lr: 0.001

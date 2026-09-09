@@ -31,6 +31,7 @@ class WSRLOff2OnArgs(VisionWSRLTrainingArgs, EnvBackendArgs):
     # back to the WSRL algorithm's own "auto" default (approx -action_dim),
     # never the WSRL paper's own antmaze setting of 0.0.
     target_entropy: float | str = "auto"
+    num_eval_episodes: int | None = None
     # Not exposed before this field existed -- always fell back to the WSRL
     # algorithm's own "always" default, which bootstraps through every
     # terminal (never stops on true done). Harmless for AntMaze/Adroit,
@@ -134,6 +135,7 @@ def build_wsrl(args: WSRLOff2OnArgs, env, eval_env, logger, checkpoint_dir):
         log_freq=args.log_freq,
         eval_freq=args.eval_freq,
         num_eval_steps=args.num_eval_steps,
+        num_eval_episodes=args.num_eval_episodes,
         checkpoint_dir=checkpoint_dir,
         checkpoint_freq=args.checkpoint_freq,
         save_replay_buffer=args.save_replay_buffer,
