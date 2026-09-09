@@ -90,14 +90,17 @@ Before finishing code changes:
 - Keep datasets, checkpoints, runs, videos, and caches under `/data/lancet`, never in Git.
 - Prefer short smoke tests; run formal experiments in a detached job and inspect bounded logs (`tail -n 100`, grep, summaries).
 - Keep Lancet as a minimal extension of WSRL; do not silently alter baseline update paths or bake GitHub credentials into images.
-## Agent continuity protocol
+## Lancet agent continuity
 
-Before substantial work, read `.agent/CURRENT_STATE.md`, `.agent/memory/INDEX.md`, and only the recent/task-relevant memories needed; do not load the full history by default.
+For Lancet-related work:
 
-After every meaningful engineering step (a completed change to code, runtime, configuration, tests, architecture, or an important engineering decision), before the next independent step:
+1. Follow the repository's existing `.agents/rules/` and `.agents/runbooks/`.
+2. Read `.agents/lancet/CURRENT_STATE.md`.
+3. Read `.agents/lancet/memory/INDEX.md`.
+4. Load only recent or task-relevant Lancet memories.
 
-1. Create `.agent/memory/YYYY-MM-DD_NNN_<slug>.md`.
-2. Update `.agent/memory/INDEX.md`.
-3. Update `.agent/CURRENT_STATE.md` when current project state changed.
-
-Do not create memory for ordinary inspection commands. Before handing back to a human, update current state, update `HANDOFF.md` if human-visible state changed, and report validation, unresolved issues, and the next action. Templates in `.agent/templates/` are the source of truth. New agents read `AGENTS.md`, current state, the index, then only the latest 3–5 relevant memories before task-specific source.
+After every meaningful engineering step, create one Lancet memory entry,
+update its index, and update `CURRENT_STATE.md` when project state changed.
+Before experiments, follow `handoff/07_experiment_workflow.md`. Before handing
+work to a human, update the relevant `handoff/` documents. Templates under
+`.agents/lancet/templates/` are the source of truth.

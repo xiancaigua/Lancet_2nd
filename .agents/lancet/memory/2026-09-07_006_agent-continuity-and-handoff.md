@@ -14,7 +14,7 @@ Create durable Human handoff and incremental Agent Memory workflows from audited
 
 ## What changed
 
-- Added `HANDOFF.md`, `.agent/CURRENT_STATE.md`, templates, recovered memories, and index.
+- Added `HANDOFF.md`, `.agents/lancet/CURRENT_STATE.md`, templates, recovered memories, and index.
 - Updated `AGENTS.md` with a short continuity protocol.
 
 ## Validation
@@ -27,4 +27,4 @@ Memories record meaningful state-changing units, not shell commands. New agents 
 
 ## Resume hint
 
-Start at `.agent/CURRENT_STATE.md`; write the next memory immediately after the next meaningful engineering step.
+Start at `.agents/lancet/CURRENT_STATE.md`; write the next memory immediately after the next meaningful engineering step.

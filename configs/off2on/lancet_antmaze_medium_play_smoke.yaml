@@ -30,8 +30,8 @@ offline_eval_freq: null
 online_eval_freq: null
 eval_freq: 0
 log_type: none
-log_dir: /data/lancet/runs
-checkpoint_dir: /data/lancet/checkpoints/lancet_smoke
+log_dir: /data/lancet/runs/smoke
+checkpoint_dir: /data/lancet/checkpoints/smoke/lancet
 checkpoint_freq: 1
 save_final_checkpoint: true
 capture_video: false

@@ -27,4 +27,4 @@ The Host checkout is the only source of truth; datasets and run artifacts are ou
 
 ## Resume hint
 
-Read `AGENTS.md` and `.agent/CURRENT_STATE.md`; do not clone a second checkout in Docker.
+Read `AGENTS.md` and `.agents/lancet/CURRENT_STATE.md`; do not clone a second checkout in Docker.
