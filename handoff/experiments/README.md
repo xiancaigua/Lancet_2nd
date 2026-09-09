@@ -7,7 +7,8 @@ authoritative record. This page is a human-readable index only.
 
 | Protocol | Scope | Status | Entry point |
 |---|---|---|---|
-| AntMaze WSRL vs Lancet-TD v1 | `antmaze-medium-play-v2`, 5 paired seeds | planned; not started; needs small patches + debug gates | [`antmaze_wsrl_lancet_v1.md`](../../experiments/protocols/antmaze_wsrl_lancet_v1.md) |
+| AntMaze WSRL vs Full Lancet v3 | `antmaze-medium-play-v2`; 5 paired seeds; Raw/Centered ablations | planned; not started; v3 implementation is the current blocker | [`antmaze_wsrl_lancet_v3.md`](../../experiments/protocols/antmaze_wsrl_lancet_v3.md) |
+| Legacy WSRL vs Lancet-TD v1 | `antmaze-medium-play-v2`, 5 paired seeds | superseded; never started; historical only | [`antmaze_wsrl_lancet_v1.md`](../../experiments/protocols/antmaze_wsrl_lancet_v1.md) |
 
 ## Smoke
 
@@ -30,4 +31,4 @@ authoritative record. This page is a human-readable index only.
 <!-- formal-rows -->
 
 No formal experiment has been started. `runs/formal/` and
-`checkpoints/formal/` were verified empty when the v1 protocol was drafted.
+`checkpoints/formal/` were verified empty on 2026-09-09 after the v3 protocol draft.

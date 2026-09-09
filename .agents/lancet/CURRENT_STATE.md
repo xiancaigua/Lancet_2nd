@@ -1,22 +1,23 @@
 # Lancet Current Agent State
 
-Last updated: 2026-09-08 22:00 CST
-Branch: `main`  
-Commit: `477abdac2f1e297c6ede82aafde20ce90b65de4b` (working tree dirty)
+Last updated: 2026-09-09
+Branch: `main`
+Commit: `ede0935942e94cc1a2b6f9889bb738b8f1e5b5ea` (working tree has v3 design work and the supplied PDF)
 
 ## Current objective
 
-Engineering consolidation and both archived tiny smokes are complete. The
-first WSRL-vs-Lancet-TD formal protocol is drafted and awaiting human review
-plus bounded enablement patches; no debug pilot, formal benchmark, or training
-process is active.
+Lancet v3 now has a code-ready implementation design and a pre-registered
+benchmark protocol against the current WSRL stack. The next task is to
+implement it and its focused tests, then pass staged validation before any
+formal benchmark. No v3 smoke, debug pilot, formal benchmark, or training
+process has run.
 
 ## Repository and runtime
 
 - Host path: `/home/zhaozihan/Lancet/rl-garden`
 - Container path: `/workspace/rl-garden`
 - Data: `/home/zhaozihan/Lancet/data` -> `/data/lancet`
-- Image/container: `lancet-d4rl:cu128` / `lancet-d4rl` (running)
+- Image/container: `lancet-d4rl:cu128` / `lancet-d4rl` (running at last audit)
 - Python/Torch/CUDA: 3.10.21 / 2.7.0+cu128 / 12.8
 - GPU: 6 x NVIDIA GeForce RTX 4090, 49140 MiB each; CUDA visible
 
@@ -29,114 +30,114 @@ process is active.
 
 ## Lancet architecture
 
+Current executable legacy scaffold:
+
 ```text
-WSRL/Cal-QL/SAC backbone (base critic and target unchanged)
-  -> Lancet(WSRL)
-     -> shared ResidualQNetwork R_phi(s,a)
-     -> post-critic residual TD fit + magnitude regularizer
-     -> actor uses min(Q_base) + R_phi
+WSRL/Cal-QL/SAC backbone
+  -> shared scalar R(s,a)
+  -> target y - mean_i Q_i
+  -> actor uses min_i Q_i + R
+```
+
+Planned v3 (designed, not implemented):
+
+```text
+WSRL base path unchanged
+  -> shared residual backbone + N critic-aligned zero-output heads
+  -> K=8 policy-local action centering
+  -> per-critic TD-residual fit, optionally weighted by detached REDQ U
+  -> actor uses min_i(Q_i + lambda(t) Delta_i)
 ```
 
 ## Implementation status
 
-### Implemented
+### Implemented and verified
 
-- `lancet` off2on registry, shared residual network, corrected-Q interface,
-  residual optimizer/logging/checkpoint hooks, AntMaze configs and unit tests.
-- Persistent Docker runtime, Host/data bind mounts, D4RL/MuJoCo legacy stack.
-- Lancet continuity has one source of truth under `.agents/lancet/`.
-- Archived experiment launcher, strict smoke/debug/formal roots, formal
-  clean-tree guard, and automatic post-run Memory/Handoff indexing.
-- Runtime, bind-mount, D4RL 1M-dataset, and Lancet audits all pass.
-- Split human Handoff is complete under `handoff/`; WSRL and Lancet real-data
-  tiny-smoke archives are finalized.
-- Planned formal protocol exists at
-  `experiments/protocols/antmaze_wsrl_lancet_v1.md`.
+- Legacy `lancet` registry, shared scalar residual, optimizer/logging/checkpoint
+  hooks, configs, unit tests, audit, and historical real-data tiny smoke.
+- WSRL real-data tiny smoke, Runtime/Mount/D4RL/Lancet audits, Docker runtime,
+  experiment archive workflow, and split Human Handoff.
+- AntMaze 1,000,000-transition dataset parse and environment reset.
 
-### Partially implemented
+### Designed, not implemented
 
-- The protocol freezes the research question, paired shared-checkpoint
-  strategy, 1M/500k budget, five seeds, metrics, statistics, failure policy,
-  20k/20k debug gate, and readiness checklist.
-- Current code is `NEEDS SMALL PATCH` for deterministic eval seeding, a forced
-  final evaluation, stage-specific shared-fork configs, missing diagnostics,
-  paired post-load RNG alignment, explicit GPU/lineage metadata, and periodic
-  checkpoints.
-- Tiny smokes finish before an AntMaze episode ends, so episodic return/success
-  are explicitly not collected.
+- `docs/design/lancet-v3-implementation.md`: architecture, shapes, local
+  actions, per-critic target, REDQ U proof, loss, actor path, zero init,
+  lifecycle, RNG, checkpoint/config API, code surface, and tests.
+- `docs/design/lancet-v3-theory-code-alignment.md`: every legacy/v3 mismatch.
+- `experiments/protocols/antmaze_wsrl_lancet_v3.md`: shared initializer,
+  WSRL-vs-Full main table, matched Raw/Centered ablations, early-AUC metrics,
+  debug gate, statistics, and rerun policy.
+- V3 is a new implementation identity; legacy smoke evidence does not validate
+  it.
 
 ### Not implemented
 
-- U-variation supervision. `lambda_u_variation` must remain `0`; a nonzero
-  value intentionally errors because no reviewed mathematical target exists.
+- `LancetV3` / `lancet_v3` registry and configs.
+- Per-critic centered residual heads, U weighting, 50k linear handoff, and v3
+  checkpoint state.
+- V3 unit tests, tiny smoke, stability pilot, and formal benchmark.
 
 ## Environment status
 
-- D4RL: 1.1 imports; optional Flow/CARLA/GymBullet warnings are non-blocking.
+- D4RL: 1.1 imports; optional backend warnings are non-blocking.
 - AntMaze: env reset and 1,000,000-transition dataset parse verified.
-- Kitchen: env construction/reset previously verified; dataset not downloaded.
-- Proxy: Host and container reach `127.0.0.1:7891`; ChatGPT returns an HTTP
-  403 Cloudflare challenge after a successful CONNECT tunnel.
-- Mount: source and data are bind-mounted read/write; container is detached.
+- Kitchen: env reset previously verified; dataset not locally validated.
+- Proxy: Host/container proxy bridge previously verified; not relevant here.
+- Mount: Host source/data bind mounts previously verified.
 - Host tmux: 3.4 installed.
-- Hardware availability: six GPUs exist, but current occupancy is shared and
-  dynamic; select an actually idle GPU before future pilots.
 
-## Verified tests
+## Verified tests and evidence
 
-- `./dev d4rl bash scripts/smoke_lancet.sh` -> 6 passed + config preflight.
-- `./dev d4rl python -m pytest -q tests/test_wsrl.py` -> 55 passed.
-- `./dev d4rl python -m pytest -q tests/test_off2on_runner.py` -> 19 passed.
-- D4RL env/dataset focused tests -> 19 passed.
-- Archived WSRL real-data smoke `20260908_123022` -> finished, all declared
-  pipeline checks passed.
-- Archived Lancet real-data smoke `20260908_123802` -> finished; finite
-  residual losses, positive residual parameter deltas, all required
-  TensorBoard tags, checkpoint reload passed.
-- Final ruff check passed; combined Lancet/archive test selection: 10 passed.
-- 2026-09-08 no-training checkpoint probe: strict WSRL-to-Lancet load, base
-  tensor equality, reproducible residual initialization, and fresh residual
-  optimizer state passed.
-- Both full-scale WSRL/Lancet `--print-config` outputs match on base fields.
-
-## Latest archived experiments
-
-- `20260908_123802`: lancet smoke -> finished
-  (`/home/zhaozihan/Lancet/data/runs/smoke/antmaze-medium-play-v2/lancet/seed_0/20260908_123802`)
-- `20260908_123022`: wsrl smoke -> finished
-  (`/home/zhaozihan/Lancet/data/runs/smoke/antmaze-medium-play-v2/wsrl/seed_0/20260908_123022`)
+- Historical legacy Lancet: 6 focused tests/config preflight, finite update,
+  residual parameter change, logging, and checkpoint round-trip passed.
+- Historical WSRL/off2on/D4RL tests and both archived tiny smokes passed.
+- V3 design audit read the supplied 26-page PDF and current SACCore, CQL,
+  CalQL, WSRL, off2on phase, SACPolicy, legacy Lancet, registry, config,
+  checkpoint, and tests at commit `ede0935`.
+- Pure Torch contract check: pairwise/efficient U agreed within 6.7e-16 for
+  N=2 and N=10; centered-action mean was below 1e-16.
+- No v3 code test or experiment has run because v3 is not implemented.
 
 ## Known issues
 
-1. U-variation is deliberately unspecified and disabled.
-2. The working tree contains this in-progress consolidation; no commit/push
-   has been performed in this task.
-3. The generic launcher does not yet record/select one GPU, and historical
-   tiny-smoke archives did not measure peak GPU memory.
+1. Legacy Lancet is scientifically and structurally different from v3.
+2. Practical v3 has observed-action TD supervision only; oracle projection
+   over counterfactual actions remains an empirical theory gap.
+3. V3 implementation and protocol-enablement patches must add deterministic
+   eval seeding, final endpoint evaluation, explicit GPU/lineage metadata, and
+   stage configs before pilots.
 
 ## Active decisions
 
 - Host owns the only checkout; Docker is runtime only.
-- Smoke/debug/formal outputs and checkpoints are strictly separated.
+- Smoke/debug/formal outputs and checkpoints remain strictly separated.
 - Experiment directories are authoritative; Memory/Handoff only summarize.
-- Lancet v1 does not change the inherited base TD target/critic update.
-- The verified scientific label is Lancet-TD / Lancet w/o U; do not call it
-  full Lancet.
-- Formal v1 uses one seed-specific WSRL offline checkpoint forked into paired
-  WSRL and Lancet-TD online branches.
+- V3 leaves WSRL Bellman target/base critic/target critic unchanged.
+- V3 uses shared backbone + N heads, exact-zero outputs, per-critic centered
+  TD fitting, U only as detached weight, and a 50k post-warmup linear lambda.
+- Existing `lancet` remains Legacy Lancet-TD; proposed v3 registry is
+  `lancet_v3` to prevent silent semantic/checkpoint changes.
+- Every seed pair shares one WSRL offline checkpoint.
+- The formal main table is WSRL vs Full Lancet v3 at five paired seeds; Raw
+  and Centered are pre-registered matched component ablations.
+- Primary performance metric is normalized-score AUC over online steps 0-50k;
+  endpoint and longer AUC metrics are secondary.
 
 ## Immediate next steps
 
-1. Human-review the protocol and current Lancet-TD implementation.
-2. Apply/test only the protocol-enablement small patches listed in the protocol.
-3. Commit/push a clean revision, then run the two archived seed-0 debug pilots.
-4. Start formal work only if every readiness gate passes.
+1. Human-review the v3 design and revised protocol.
+2. Implement `lancet_v3` and the focused unit tests without changing baseline
+   WSRL loss/update behavior.
+3. After unit tests, run an archived tiny v3 real-data smoke.
+4. Only then run the seed-0 20k stability pilot; formal work remains blocked.
 
 ## Read next
 
 1. `AGENTS.md`
 2. Task-relevant `.agents/rules/` and `.agents/runbooks/`
 3. `.agents/lancet/memory/INDEX.md`
-4. Latest/task-relevant 3–5 memories
-5. `handoff/README.md` and task-specific source
-6. `experiments/protocols/antmaze_wsrl_lancet_v1.md` for benchmark work
+4. `docs/design/Lancet_v3_技术实现思路与理论证明.pdf`
+5. `docs/design/lancet-v3-implementation.md`
+6. `docs/design/lancet-v3-theory-code-alignment.md`
+7. Revised v3 benchmark protocol under `experiments/protocols/`

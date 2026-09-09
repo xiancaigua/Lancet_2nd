@@ -1,8 +1,12 @@
-# AntMaze WSRL vs Lancet-TD Benchmark Protocol v1
+# Legacy AntMaze WSRL vs Lancet-TD Benchmark Protocol v1
 
-Status: **planned; no debug pilot or formal benchmark has been started**  
+Status: **legacy planned protocol; never started; superseded by `antmaze_wsrl_lancet_v3.md`**
 Protocol date: 2026-09-08  
 Protocol scope: first-stage `antmaze-medium-play-v2` comparison only
+
+> Historical note: this document describes the executable 2026-09-08
+> shared-scalar Raw-Residual scaffold. It is retained for traceability, not as
+> the implementation or benchmark contract for Lancet v3.
 
 ## Research question and method names
 
@@ -18,10 +22,11 @@ The two compared methods are:
 - **Lancet-TD**: WSRL plus the current shared TD-residual critic correction,
   with `lambda_u_variation: 0.0`.
 
-This is explicitly **Lancet-TD / Lancet w/o U**, not full Lancet. The
-U-variation objective is intentionally disabled because its mathematical
-definition has not yet been finalized. This protocol must not be relabeled as
-a full-Lancet evaluation later.
+This is explicitly **Legacy Lancet-TD / Lancet w/o U**, not Lancet v3. At the
+time of this protocol the legacy `lambda_u_variation` loss had no approved
+definition and was intentionally disabled. Lancet v3 subsequently defines U
+as a detached fitting weight rather than an independent loss; that newer
+design does not retroactively change this protocol.
 
 ## Scope
 
@@ -485,9 +490,9 @@ debug gates below pass.
 
 Only after every item is checked may the formal launcher be used.
 
-## Open research decisions outside v1
+## Historical scope boundary
 
-The mathematical definition of U-variation, its target, loss weight, and
-action-preference interpretation remain open. They are deliberately outside
-this TD-only protocol. Action-dependent analysis is optional and does not
-authorize implementing or enabling U-variation.
+This legacy protocol intentionally left its `lambda_u_variation` loss
+undefined and disabled. Lancet v3 supersedes that concept with detached U
+weighting of centered per-critic TD-residual fitting. The v3 design and
+protocol are authoritative for future implementation and experiments.

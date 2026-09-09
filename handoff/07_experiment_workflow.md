@@ -1,17 +1,20 @@
 # Experiment Archival Workflow
 
-## Planned first formal protocol
+## Current protocol identities
 
-The frozen design entry point is
-[`experiments/protocols/antmaze_wsrl_lancet_v1.md`](../experiments/protocols/antmaze_wsrl_lancet_v1.md).
-It compares WSRL with **Lancet-TD / Lancet w/o U** on
-`antmaze-medium-play-v2`; `lambda_u_variation` remains `0.0`. The protocol is
-planned only. Formal execution is blocked until its small implementation
-patches and two seed-0 debug pilots pass.
+The current planned scientific entry point is
+[`experiments/protocols/antmaze_wsrl_lancet_v3.md`](../experiments/protocols/antmaze_wsrl_lancet_v3.md).
+It covers WSRL, capacity-matched Raw and Centered residual ablations, and Full
+Lancet v3 on `antmaze-medium-play-v2`. It is a pre-registered design: v3 is not
+implemented and no v3 pilot or formal run has started.
+
+[`antmaze_wsrl_lancet_v1.md`](../experiments/protocols/antmaze_wsrl_lancet_v1.md)
+is retained only as the never-executed Legacy Lancet-TD/shared-scalar protocol.
+It must not be used as the contract or evidence for v3.
 
 Every smoke, debug, or formal run must be launched through
 `scripts/experiments/archive_run.py` on the Host. The experiment directory is
-authoritative; Agent Memory and this Handoff contain only summaries/indexes.
+authoritative; Agent Memory and this Handoff contain summaries and indexes.
 
 ## Isolation and protection
 
@@ -24,6 +27,7 @@ The launcher validates run-type intent, generates only paths under the matching
 root, verifies those paths in rl-garden's resolved config, rejects non-smoke
 configs for smoke, rejects smoke configs for formal, and requires a clean Git
 tree for formal unless an explicit dirty-run override captures `git.diff`.
+The v3 protocol is stricter: formal runs may not use that override.
 
 ## Required order
 
@@ -44,24 +48,25 @@ Before execution the archive contains:
   comparison, exact command, expected outputs, success/failure criteria;
 - `config.yaml`: frozen source config;
 - `resolved_config.json`: effective config emitted by rl-garden;
-- `command.txt`: the actual `./dev d4rl ...` argv rendered shell-safely;
-- `metadata.json`: status, timestamps, Git state, paths, hardware;
+- `command.txt`: actual `./dev d4rl ...` argv rendered shell-safely;
+- `metadata.json`: status, timestamps, Git state, paths, and hardware;
 - `metrics/` and `plots/` placeholders.
 
 After execution it contains `train.log`, updated metadata, and `analysis.md`.
-A keyboard interruption is finalized as `stopped` (return code 130) rather than leaving metadata at `running`.
-The automatic analysis reports only process/log/checkpoint evidence and marks
-uncollected metrics as such. Humans/Agents may enrich it from real metrics,
-evaluation, checkpoints, or WandB, but must never infer results from config.
+A keyboard interruption is finalized as `stopped` (return code 130), not left
+at `running`. Analysis must cite process/log/checkpoint/metric evidence and
+mark uncollected metrics as `not collected`; it must never infer results from
+configuration alone.
 
-## Smoke versus formal
+## Smoke, debug, and formal roles
 
-Smoke validates plumbing: data load, updates, switch, env steps, logging,
-checkpoints, finite values, and shapes. It is not a performance claim. Formal
-runs additionally require frozen commit/config, dataset, seed, baseline,
-budget, hardware, timestamps, final metrics, and final checkpoint. Run formal
-work detached through Host tmux or a scheduler, never as an unarchived Codex
-foreground command.
+- **Smoke** validates plumbing, finite updates, switch, checkpoint, and shapes;
+  it is not a performance claim.
+- **Debug pilot** is an engineering stability gate and never enters a formal
+  result table.
+- **Formal** requires a clean frozen commit and config, shared checkpoint
+  lineage, seed, dataset, budget, selected GPU, timestamps, metrics, and final
+  checkpoint. It runs detached through Host tmux or a scheduler.
 
 ## Launcher example
 
@@ -73,7 +78,7 @@ python3 scripts/experiments/archive_run.py \
   --seed 0 \
   --config configs/off2on/wsrl_antmaze_medium_play_smoke.yaml \
   --purpose 'Validate real-data WSRL offline-to-online plumbing.' \
-  --hypothesis 'The 2-offline/4-online-step run completes with checkpoints.' \
+  --hypothesis 'The tiny run completes with checkpoints.' \
   --success-criteria 'Process exits zero.' \
   --success-criteria 'Offline and final checkpoints can be reloaded.'
 ```
@@ -84,17 +89,22 @@ command record. See `scripts/experiments/README.md`.
 ## Existing outputs
 
 Nine older setup/test/download logs lacked pre-run intent/config/metadata.
-They were preserved under `runs/legacy_unclassified/`; none was relabeled
-formal. The preserved files are `lancet_d4rl_bootstrap.log`,
-`antmaze_dataset_resume.log`, three D4RL import/env/dataset logs, two
-config-preflight logs, and two WSRL pytest logs. No existing checkpoint
-required classification.
+They remain preserved under `runs/legacy_unclassified/`; none was relabeled
+formal. No existing checkpoint required classification.
 
-## Protocol-specific preflight
+## V3 implementation-to-benchmark gates
 
-Before the first AntMaze v1 pilot, create/review stage-specific configs for a
-shared WSRL offline initializer and two online forks. Add deterministic eval
-seeding, a forced final-endpoint evaluation, required Q/residual diagnostics,
-paired post-load RNG alignment, explicit GPU selection, checkpoint-lineage
-metadata, and periodic checkpoint frequency. Do not use the current full WSRL and Lancet YAML files directly for
-the paired comparison: both currently include their own offline phase.
+The required order is:
+
+1. human review of `docs/design/lancet-v3-implementation.md` and the v3
+   protocol;
+2. implement `lancet_v3` plus focused unit tests without changing WSRL's base
+   target or critic update;
+3. run one archived tiny real-data v3 smoke;
+4. add/review shared-initializer and online-fork configs, deterministic eval
+   seed, forced endpoint evaluation, diagnostics, GPU/lineage metadata, and
+   periodic checkpoint cadence;
+5. run the archived seed-0 debug pilot from the v3 protocol;
+6. freeze a clean pushed commit and only then authorize formal execution.
+
+Do not run the legacy v1 pilot as a substitute for v3 validation.

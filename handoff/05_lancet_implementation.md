@@ -1,8 +1,22 @@
-# Lancet Implementation
+# Lancet Implementation Status
 
-Lancet v1 is a minimal subclass of `WSRL`, registered as a separate off2on
-algorithm. It does not copy the WSRL runner or replace the base SAC/Cal-QL
-critic machinery.
+## Status split
+
+The repository currently contains two different levels of Lancet material:
+
+- **Executable and tested:** Legacy Lancet-TD, the shared scalar raw-residual
+  scaffold in `rl_garden/algorithms/lancet.py`.
+- **Designed, not implemented:** Lancet v3, specified in
+  `docs/design/lancet-v3-implementation.md` and checked against the current
+  code in `docs/design/lancet-v3-theory-code-alignment.md`.
+
+Do not call the current executable class full Lancet or Lancet v3.
+
+## Legacy Lancet-TD
+
+Legacy Lancet-TD is a minimal subclass of `WSRL`, registered as a separate
+off2on algorithm. It does not copy the WSRL runner or replace the base
+SAC/Cal-QL critic machinery.
 
 ```mermaid
 flowchart LR
@@ -18,46 +32,59 @@ flowchart LR
     RL --> R
 ```
 
-## Source ownership
+### Source ownership
 
-- `rl_garden/algorithms/lancet.py`: residual network and update overrides.
-- `rl_garden/training/off2on/lancet.py`: Args, builder, registry call.
-- `rl_garden/algorithms/__init__.py`: public exports.
-- `configs/off2on/lancet_antmaze_medium_play_v2.yaml`: formal-scale template,
-  not executed in this work.
-- `configs/off2on/lancet_antmaze_medium_play_smoke.yaml`: tiny wiring check.
+- `rl_garden/algorithms/lancet.py`: legacy residual network and overrides.
+- `rl_garden/training/off2on/lancet.py`: legacy Args, builder, registry call.
+- `configs/off2on/lancet_antmaze_medium_play_v2.yaml`: legacy full-scale
+  template, never executed as a formal benchmark.
+- `configs/off2on/lancet_antmaze_medium_play_smoke.yaml`: historical tiny
+  wiring check.
 
-## Exact v1 behavior
+### Exact legacy behavior
 
-- Base critic: inherited WSRL ensemble, normally updated by the inherited
-  TD/CQL loss. Lancet does not replace that optimizer step.
-- Target critic/TD target: inherited SAC target path; the residual is not added
-  to the bootstrap target.
-- Residual: one shared MLP `R_phi(state, action) -> [batch, 1]`, added to every
-  ensemble member to avoid multiplying capacity by critic count.
-- Residual target: after the base critic step,
-  `stopgrad(target_q - mean_i(Q_base_i))`.
-- Residual optimization: MSE TD fit plus squared-magnitude regularization,
-  using its own optimizer. Audit coverage proves parameters change after a
-  step.
-- Actor: inherited sampling/entropy term, but the Q term is
-  `min_i(Q_base_i) + R_phi`. Only the actor optimizer steps in this phase;
-  residual ownership remains with the residual optimizer.
-- Corrected-Q interface: returns `[n_critics, batch, 1]`.
+- Base critic and target: inherited WSRL paths.
+- Residual: one shared MLP `R_phi(state, action) -> [batch,1]`, added to every
+  critic.
+- Target: `stopgrad(target_q - mean_i(Q_base_i))`, recomputed after the base
+  update.
+- Actor: `min_i(Q_base_i) + R_phi`.
+- Regularizer: squared magnitude of raw R on the observed action.
+- Initialization: default nonzero linear initialization.
+- Phase behavior: the hook is not explicitly restricted to post-warmup online
+  updates.
 
-## Logging and checkpoints
+The residual optimizer and weights are checkpointed. Existing unit/audit tests
+verify construction, finite update, parameter change, registry, and reload.
 
-Metrics include residual mean/absolute mean/std, total residual loss, TD fit,
-U-variation placeholder, regularizer, residual/Q ratio, and TD-error mean/
-absolute mean. Tags are written under `lancet/*` and `critic/*`.
+### Legacy U behavior
 
-The residual optimizer is added through `_optimizer_names`; residual weights
-are stored under extra checkpoint state, and Lancet hyperparameters are stored
-as checkpoint metadata. Unit/audit tests cover save/load equality and presence
-of both residual weights and optimizer state.
+`lambda_u_variation` defaults to `0`. The legacy implementation rejects a
+nonzero value. This old placeholder must not be carried into v3.
 
-## U-variation
+## Planned Lancet v3
 
-`lambda_u_variation` defaults to `0`. Its mathematics is not defined in the
-project, so the implementation returns zero only in that mode and rejects any
-nonzero value. No surrogate formula was invented by the Agent.
+V3 replaces the legacy correction design:
+
+```text
+WSRL base critic/target (unchanged)
+  + shared residual backbone with one head per REDQ critic
+  + K=8 policy-local actions
+  + per-head action centering
+  + per-head observed TD-residual supervision
+  + detached REDQ disagreement used only as fitting weight
+  -> actor uses min_i(Q_i + lambda(t) Delta_i)
+```
+
+The output heads are exact-zero initialized. Residual fitting is disabled
+offline and during WSRL warmup. A linear 50k post-warmup schedule decays the
+actor-facing correction from one to zero. U is mathematically defined as an
+action-dependent ensemble-disagreement weight, not an independent loss.
+
+Authoritative design entry points:
+
+1. `docs/design/Lancet_v3_技术实现思路与理论证明.pdf`
+2. `docs/design/lancet-v3-implementation.md`
+3. `docs/design/lancet-v3-theory-code-alignment.md`
+
+No Lancet v3 algorithm code, smoke, pilot, or formal result exists yet.

@@ -8,6 +8,8 @@ Current state: [`../CURRENT_STATE.md`](../CURRENT_STATE.md)
 
 | Seq | Date | Topic | Status | File |
 |---|---|---|---|---|
+| 002 | 2026-09-09 | Lancet v3 benchmark protocol | completed | [memory](2026-09-09_002_lancet-v3-benchmark-protocol.md) |
+| 001 | 2026-09-09 | Lancet v3 design frozen | completed | [memory](2026-09-09_001_lancet-v3-design-frozen.md) |
 | 008 | 2026-09-08 | Formal benchmark protocol drafted | completed | [memory](2026-09-08_008_formal-benchmark-protocol-drafted.md) |
 | 007 | 2026-09-08 | Final validation and launcher hardening | completed | [memory](2026-09-08_007_final-validation-and-launcher-hardening.md) |
 | 006 | 2026-09-08 | lancet smoke | completed | [memory](2026-09-08_006_lancet-antmaze-medium-play-v2-smoke.md) |
@@ -38,10 +40,12 @@ was not independently recorded.
 
 ### Lancet
 
+- [Lancet v3 design frozen](2026-09-09_001_lancet-v3-design-frozen.md)
 - [Lancet residual scaffold](2026-09-07_004_lancet-residual-scaffold.md)
 
 ### Dataset / experiments
 
+- [Lancet v3 benchmark protocol](2026-09-09_002_lancet-v3-benchmark-protocol.md)
 - [Formal benchmark protocol drafted](2026-09-08_008_formal-benchmark-protocol-drafted.md)
 - [lancet smoke](2026-09-08_006_lancet-antmaze-medium-play-v2-smoke.md)
 - [wsrl smoke](2026-09-08_005_wsrl-antmaze-medium-play-v2-smoke.md)
