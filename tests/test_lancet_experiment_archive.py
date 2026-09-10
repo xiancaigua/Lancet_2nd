@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import importlib.util
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -49,6 +50,15 @@ def test_exclusive_lock_uses_persistent_lock_file(tmp_path):
     lock_path = tmp_path / "locks" / "gpu_0.lock"
     with archive._exclusive_lock(lock_path):
         assert lock_path.is_file()
+
+
+def test_gpu_free_mib_parses_nvidia_smi(monkeypatch):
+    monkeypatch.setattr(
+        archive.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(stdout="49140\n"),
+    )
+    assert archive._gpu_free_mib(2) == 49140
 
 
 def test_archive_paths_map_only_below_data_root(tmp_path, monkeypatch):

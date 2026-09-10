@@ -19,6 +19,11 @@ pre-registered runs assigned to one GPU therefore queue safely; metadata shows
 current-state, and Handoff updates are serialized with a separate continuity
 lock.
 
+When other projects already occupy the selected devices, add
+`--min-free-gpu-mib 45000`. The archive is created immediately, but training
+remains `prepared` with `gpu_capacity_state=waiting` until the selected GPU has
+enough free memory. This check never stops or modifies the existing process.
+
 ```bash
 python3 scripts/experiments/archive_run.py \
   --run-type smoke --algorithm wsrl \

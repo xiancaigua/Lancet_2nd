@@ -8,6 +8,7 @@ Current state: [`../CURRENT_STATE.md`](../CURRENT_STATE.md)
 
 | Seq | Date | Topic | Status | File |
 |---|---|---|---|---|
+| 003 | 2026-09-11 | External GPU capacity gate | completed | [memory](2026-09-11_003_external-gpu-capacity-gate.md) |
 | 002 | 2026-09-11 | Formal GPU queue | completed | [memory](2026-09-11_002_formal-gpu-queue.md) |
 | 001 | 2026-09-11 | Formal identity and coordinates | completed | [memory](2026-09-11_001_formal-identity-and-coordinates.md) |
 | 004 | 2026-09-10 | Pilot analysis and readiness | completed | [memory](2026-09-10_004_pilot-analysis-and-readiness.md) |
@@ -59,6 +60,7 @@ was not independently recorded.
 
 ### Dataset / experiments
 
+- [External GPU capacity gate](2026-09-11_003_external-gpu-capacity-gate.md)
 - [Formal GPU queue](2026-09-11_002_formal-gpu-queue.md)
 - [Formal identity and coordinates](2026-09-11_001_formal-identity-and-coordinates.md)
 

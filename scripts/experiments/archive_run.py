@@ -20,6 +20,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
@@ -121,6 +122,48 @@ def _hardware() -> list[str]:
         check=False,
     )
     return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+
+def _gpu_free_mib(gpu_id: int) -> int:
+    result = subprocess.run(
+        [
+            "nvidia-smi",
+            "--id",
+            str(gpu_id),
+            "--query-gpu=memory.free",
+            "--format=csv,noheader,nounits",
+        ],
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    return int(result.stdout.strip())
+
+
+def _wait_for_gpu_capacity(
+    gpu_id: int, minimum_free_mib: int, metadata: dict, metadata_path: Path
+) -> None:
+    while True:
+        free_mib = _gpu_free_mib(gpu_id)
+        metadata["gpu_free_mib_last"] = free_mib
+        metadata["gpu_capacity_checked_at"] = _iso_now()
+        if free_mib >= minimum_free_mib:
+            metadata["gpu_capacity_state"] = "ready"
+            _write_json(metadata_path, metadata)
+            print(
+                f"gpu {gpu_id} ready: {free_mib} MiB free "
+                f"(required {minimum_free_mib} MiB)",
+                flush=True,
+            )
+            return
+        metadata["gpu_capacity_state"] = "waiting"
+        _write_json(metadata_path, metadata)
+        print(
+            f"gpu {gpu_id} waiting: {free_mib} MiB free "
+            f"(required {minimum_free_mib} MiB)",
+            flush=True,
+        )
+        time.sleep(30)
 
 
 def _validate_intent(args: argparse.Namespace, config: Path, dirty: bool) -> None:
@@ -431,6 +474,12 @@ def main() -> int:
         default=None,
         help="Expose one physical GPU to the container command as logical cuda:0.",
     )
+    parser.add_argument(
+        "--min-free-gpu-mib",
+        type=int,
+        default=None,
+        help="Wait under the per-GPU lock until this much GPU memory is free.",
+    )
     parser.add_argument("--config", required=True, type=Path)
     parser.add_argument(
         "--protocol",
@@ -501,6 +550,11 @@ def main() -> int:
     commit = _git("rev-parse", "HEAD")
     dirty = bool(_git("status", "--porcelain"))
     _validate_intent(args, config, dirty)
+    if args.min_free_gpu_mib is not None:
+        if args.gpu_id is None:
+            raise SystemExit("--min-free-gpu-mib requires --gpu-id.")
+        if args.min_free_gpu_mib <= 0:
+            raise SystemExit("--min-free-gpu-mib must be positive.")
 
     experiment_id = _timestamp()
     output_dir = _unique_directory(
@@ -577,6 +631,12 @@ def main() -> int:
             else None
         ),
         "gpu_lock_state": "not_requested",
+        "min_free_gpu_mib": args.min_free_gpu_mib,
+        "gpu_free_mib_last": None,
+        "gpu_capacity_checked_at": None,
+        "gpu_capacity_state": (
+            "not_requested" if args.min_free_gpu_mib is None else "pending"
+        ),
         "start_time": None,
         "end_time": None,
         "status": "prepared",
@@ -645,6 +705,13 @@ def main() -> int:
     with lock_context:
         if args.gpu_id is not None:
             metadata["gpu_lock_state"] = "acquired"
+        if args.min_free_gpu_mib is not None:
+            _wait_for_gpu_capacity(
+                args.gpu_id,
+                args.min_free_gpu_mib,
+                metadata,
+                output_dir / "metadata.json",
+            )
         metadata["status"] = "running"
         metadata["start_time"] = _iso_now()
         _write_json(output_dir / "metadata.json", metadata)
