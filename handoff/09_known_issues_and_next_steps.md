@@ -6,8 +6,9 @@ The implementation, current-method tiny smoke, seed-0 shared initializer,
 paired 20k online pilot, checkpoint reload, and finite diagnostics passed.
 Before formal work:
 
-1. Human-review the frozen implementation and evidence commits.
-2. Push the chosen clean commit to `origin`; formal metadata must reference
+1. Treat the user's formal-launch authorization as acceptance of the already
+   reviewed frozen implementation; do not reopen algorithm design.
+2. Push the chosen clean formal commit to `origin`; formal metadata must reference
    that immutable remote commit.
 3. Reconfirm empty formal roots and prepare the five seed-specific shared
    offline initializer archives, configs, and hashes.
@@ -47,7 +48,6 @@ after seeing results.
 
 ## Current decision
 
-**NOT READY FOR FORMAL** operationally: the scientific/runtime gates passed,
-but the final evidence commit is not yet human-reviewed and pushed. After that
-small release gate, the next benchmark action is the five archived 1M shared
-WSRL offline initializers—not untracked online runs. No formal run has started.
+The implementation/review gates passed and the user authorized formal launch.
+Freeze and push the formal-infrastructure commit, then start the five archived
+1M shared WSRL offline initializers. Do not start untracked online runs.

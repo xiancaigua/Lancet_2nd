@@ -7,6 +7,10 @@ Memory, and indexes the result in the human Handoff.
 
 Every run requires an explicit purpose, hypothesis, and success criteria.
 Formal runs reject smoke configs and dirty worktrees by default.
+They additionally require `--protocol` and `--dataset-path`; the launcher
+stores their SHA256 values together with source/resolved config hashes.
+Online formal forks must also pass `--lineage-checkpoint` so the exact shared
+initializer path and hash are frozen in metadata.
 
 ```bash
 python3 scripts/experiments/archive_run.py \
@@ -16,6 +20,20 @@ python3 scripts/experiments/archive_run.py \
   --purpose "Validate the real-data WSRL off2on pipeline." \
   --hypothesis "The tiny pipeline completes with finite updates and checkpoints." \
   --success-criteria "Process exits zero."
+```
+
+Formal identity example:
+
+```bash
+python3 scripts/experiments/archive_run.py \
+  --run-type formal --algorithm wsrl --environment antmaze-medium-play-v2 \
+  --seed 0 --gpu-id 0 \
+  --config configs/off2on/wsrl_antmaze_medium_play_v2_offline_initializer.yaml \
+  --protocol experiments/protocols/antmaze_wsrl_lancet.md \
+  --dataset-path /home/zhaozihan/Lancet/data/datasets/d4rl/Ant_maze_big-maze_noisy_multistart_True_multigoal_False_sparse_fixed.hdf5 \
+  --purpose "Create the seed-0 shared formal initializer." \
+  --hypothesis "The frozen WSRL initializer completes and is reloadable." \
+  --success-criteria "One million updates and offline_final.pt validation pass."
 ```
 
 `--gpu-id N` records the physical GPU and executes the container command with only that GPU visible. `--method-label raw-residual` (or `centered-residual`) keeps ablation archives separate while the executable registry remains `lancet`.

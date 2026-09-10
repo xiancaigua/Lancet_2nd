@@ -124,13 +124,15 @@ first active batch mean, not zero. There is no U loss, U target, or
 - adaptation steps `[0,50000)`: lambda=1, residual updates active;
 - adaptation step `>=50000`: lambda=0, residual updates stop, actor uses base Q.
 
-Logs retain both actual `online_step` and `adaptation_step`. A 50k adaptation
+Logs retain three distinct coordinates: `global_step` includes offline and
+online work, `online_step` starts at the online switch, and `adaptation_step`
+starts at the first trainable step after the frozen warmup. A 50k adaptation
 window therefore corresponds approximately to online steps 5k–55k.
 
 The nominal online budget is 500k. With `train_freq=64`, do not modify rollout
 behavior to land on exactly 500000. The final endpoint is the first actual
-step `>=500k` common to all compared methods, and the reported coordinate is
-the actual step.
+`online_step >= 500k` common to all compared methods. Reports must include its
+global and online coordinates and must never label `global_step` as online.
 
 ## 7. Validation sequence and seed-0 debug pilot
 
@@ -198,9 +200,9 @@ boundary when needed.
 ### Secondary
 
 - Adaptation AUC 0–100k;
-- full online AUC through the common actual endpoint;
+- full online AUC through the common actual online endpoint;
 - final-window mean over the last 10 evaluations;
-- score at the common actual final endpoint;
+- score at the common actual final online endpoint;
 - complete paired-seed learning curves.
 
 ### Diagnostic
@@ -260,7 +262,7 @@ archives explicitly. Poor return or an unfavorable seed never permits rerun.
 
 ## 13. Readiness checklist
 
-- [x] Lancet implementation manually reviewed.
+- [x] Lancet implementation review gate accepted before formal authorization.
 - [x] WSRL target/base-loss parity and baseline regression tests passed.
 - [x] Tensor, gradient, lifecycle, UTD, and checkpoint tests passed.
 - [x] Raw/Centered/Lancet matched-machinery behavior verified.
@@ -272,7 +274,7 @@ archives explicitly. Poor return or an unfavorable seed never permits rerun.
 - [x] Diagnostics and reload are finite (except peak-memory scalar, which was
   not collected; no OOM occurred).
 - [ ] Formal configs, dataset/checkpoint hashes, commit, and matrix frozen.
-- [ ] Final clean commit human-reviewed and pushed.
+- [ ] Final clean formal-infrastructure commit pushed.
 - [ ] Formal roots rechecked immediately before launch.
 
 Formal launch remains unauthorized until every applicable item passes.

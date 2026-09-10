@@ -6,8 +6,8 @@ Commit: `991991d1e6e77fbe42b95d2cc8a82faa376601b8` plus experiment archive evide
 
 ## Current objective
 
-Close the validated Lancet implementation at a clean evidence commit and hand
-it to a human for review/push. Formal benchmarks remain unstarted.
+Freeze formal experiment identity and launch the five seed-specific shared
+WSRL offline initializers. Lancet algorithm design is closed.
 
 ## Repository and runtime
 
@@ -61,8 +61,8 @@ active at lambda=1 for 50k adaptation steps, then update/correction are off.
   below `7.13e-4`. Both short debug curves were identically zero, so no
   performance claim is supported.
 - Formal benchmark (not started).
-- Readiness: **NOT READY FOR FORMAL** only because the final evidence commit
-  still needs human review and push; implementation/runtime gates passed.
+- The user accepted the implementation/review gates and authorized formal
+  initialization; formal identity hashing and launch are in progress.
 
 ## Environment status
 
@@ -75,19 +75,19 @@ active at lambda=1 for 50k adaptation steps, then update/correction are off.
 
 - WSRL Bellman/CQL/Cal-QL/REDQ target behavior is unchanged.
 - All online branches fork one seed-matched WSRL offline checkpoint.
-- Primary metric is Adaptation AUC 0–50k from the first trainable post-warmup
-  step; endpoint is the first common actual step >= nominal 500k.
+- `global_step`, `online_step`, and `adaptation_step` are distinct. Primary
+  Adaptation AUC 0–50k starts at the first trainable post-warmup step; the
+  endpoint is the first common actual `online_step >= 500k`.
 - Raw/Centered/Lancet share capacity, initialization, local actions, optimizer,
   lifecycle, and checkpoint machinery.
 - Formal requires a clean pushed frozen commit and all runtime gates.
 
 ## Immediate next steps
 
-1. Review and commit validation tooling, memories, and handoff updates.
-2. Human-review and push the frozen commits to `origin`.
-3. Recheck empty formal roots, then prepare the five archived 1M shared WSRL
-   initializers only after explicit formal-launch authorization.
-4. Do not launch unarchived or outcome-selected runs.
+1. Commit/push coordinate and formal-identity archive changes.
+2. Freeze dataset/config/protocol hashes and recheck formal roots.
+3. Launch five archived 1M shared WSRL initializers on explicit GPUs.
+4. Monitor numerical/checkpoint health without performance intervention.
 
 ## Read next
 

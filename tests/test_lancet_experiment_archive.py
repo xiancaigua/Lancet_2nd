@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib.util
 from pathlib import Path
 
@@ -29,6 +30,19 @@ def test_formal_rejects_smoke_config_and_dirty_tree():
         archive._validate_intent(_args("formal"), Path("x_smoke.yaml"), False)
     with pytest.raises(SystemExit, match="clean working tree"):
         archive._validate_intent(_args("formal"), Path("paper.yaml"), True)
+
+
+def test_formal_requires_frozen_protocol_and_dataset_identity():
+    with pytest.raises(SystemExit, match="--protocol and --dataset-path"):
+        archive._validate_intent(_args("formal"), Path("paper.yaml"), False)
+
+
+def test_sha256_streams_file(tmp_path):
+    artifact = tmp_path / "artifact.bin"
+    artifact.write_bytes(b"lancet-formal-identity")
+    assert (
+        archive._sha256(artifact) == hashlib.sha256(artifact.read_bytes()).hexdigest()
+    )
 
 
 def test_archive_paths_map_only_below_data_root(tmp_path, monkeypatch):

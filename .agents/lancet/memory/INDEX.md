@@ -8,6 +8,7 @@ Current state: [`../CURRENT_STATE.md`](../CURRENT_STATE.md)
 
 | Seq | Date | Topic | Status | File |
 |---|---|---|---|---|
+| 001 | 2026-09-11 | Formal identity and coordinates | completed | [memory](2026-09-11_001_formal-identity-and-coordinates.md) |
 | 004 | 2026-09-10 | Pilot analysis and readiness | completed | [memory](2026-09-10_004_pilot-analysis-and-readiness.md) |
 | 003 | 2026-09-10 | lancet debug | completed | [memory](2026-09-10_003_lancet-antmaze-medium-play-v2-debug.md) |
 | 002 | 2026-09-10 | wsrl debug | completed | [memory](2026-09-10_002_wsrl-antmaze-medium-play-v2-debug.md) |
@@ -56,6 +57,8 @@ was not independently recorded.
 - [Lancet residual scaffold](2026-09-07_004_lancet-residual-scaffold.md)
 
 ### Dataset / experiments
+
+- [Formal identity and coordinates](2026-09-11_001_formal-identity-and-coordinates.md)
 
 - [Pilot analysis and readiness](2026-09-10_004_pilot-analysis-and-readiness.md)
 

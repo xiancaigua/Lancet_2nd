@@ -100,7 +100,7 @@ The required order is:
 2. archived tiny real-data shared-fork smoke (done);
 3. archived seed-0 20k shared initializer and paired online pilot (done);
 4. evidence-based checkpoint/scalar/paired-AUC analysis (done);
-5. human-review and push a clean frozen evidence commit (pending);
+5. accept the frozen implementation review and push the clean formal commit;
 6. recheck formal roots and explicitly authorize the five archived 1M shared
    offline initializers before any online formal branch (pending).
 

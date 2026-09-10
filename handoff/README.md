@@ -13,8 +13,8 @@ unit/regression tests, experiment archive launcher, and audits exist.
 - Completed: runtime, D4RL/MuJoCo, GPU/mount validation, current Lancet,
   continuity/archival tooling, current-method tiny smoke, and the paired
   seed-0 20k stability gate.
-- Partial: formal configs/protocol exist, but the final evidence commit still
-  needs human review/push and formal checkpoint hashes do not exist yet.
+- Partial: formal configs/protocol and implementation review are frozen; the
+  formal commit/hash manifest and seed-specific checkpoint hashes are next.
 - Current U semantics: detached REDQ action-disagreement weighting of residual
   fitting. There is intentionally no separate U loss or prediction target.
 - Not started: formal or multi-seed benchmark.

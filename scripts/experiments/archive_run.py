@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import hashlib
 import json
 import os
 import re
@@ -78,6 +79,14 @@ def _write_json(path: Path, value: object) -> None:
     )
 
 
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def _parse_json_output(output: str) -> dict:
     """Extract one JSON object from stdout polluted by legacy import notices."""
     decoder = json.JSONDecoder()
@@ -112,6 +121,11 @@ def _validate_intent(args: argparse.Namespace, config: Path, dirty: bool) -> Non
             "Formal runs require a clean working tree. Use --allow-dirty-formal only "
             "when the archive must capture git.diff."
         )
+    if args.run_type == "formal" and (
+        getattr(args, "protocol", None) is None
+        or getattr(args, "dataset_path", None) is None
+    ):
+        raise SystemExit("Formal runs require --protocol and --dataset-path.")
 
 
 def _readme(args: argparse.Namespace, metadata: dict, exact_command: str) -> str:
@@ -165,6 +179,17 @@ def _readme(args: argparse.Namespace, metadata: dict, exact_command: str) -> str
 - Config path: `{metadata["config_path"]}`
 - Frozen copy: `config.yaml`
 - Effective config: `resolved_config.json`
+
+## Frozen identity
+
+- Source config SHA256: `{metadata["source_config_sha256"]}`
+- Resolved config SHA256: `{metadata["resolved_config_sha256"]}`
+- Protocol: `{metadata["protocol_path"]}`
+- Protocol SHA256: `{metadata["protocol_sha256"]}`
+- Dataset: `{metadata["dataset_path"]}`
+- Dataset SHA256: `{metadata["dataset_sha256"]}`
+- Shared initializer lineage: `{metadata["lineage_checkpoint_path"]}`
+- Lineage checkpoint SHA256: `{metadata["lineage_checkpoint_sha256"]}`
 
 Important hyperparameters:
 
@@ -394,6 +419,21 @@ def main() -> int:
         help="Expose one physical GPU to the container command as logical cuda:0.",
     )
     parser.add_argument("--config", required=True, type=Path)
+    parser.add_argument(
+        "--protocol",
+        type=Path,
+        help="Frozen protocol file; required for formal runs.",
+    )
+    parser.add_argument(
+        "--dataset-path",
+        type=Path,
+        help="Host dataset file to hash; required for formal runs.",
+    )
+    parser.add_argument(
+        "--lineage-checkpoint",
+        type=Path,
+        help="Shared initializer checkpoint to hash for an online fork.",
+    )
     parser.add_argument("--purpose", required=True)
     parser.add_argument("--hypothesis", required=True)
     parser.add_argument("--success-criteria", required=True, action="append")
@@ -421,6 +461,28 @@ def main() -> int:
         config_rel = config.relative_to(REPO)
     except ValueError as exc:
         raise SystemExit("Config must be inside the repository.") from exc
+
+    protocol = None
+    protocol_rel = None
+    if args.protocol is not None:
+        protocol = (
+            args.protocol if args.protocol.is_absolute() else REPO / args.protocol
+        )
+        protocol = protocol.resolve()
+        if not protocol.is_file():
+            raise SystemExit(f"Protocol does not exist: {protocol}")
+        try:
+            protocol_rel = protocol.relative_to(REPO)
+        except ValueError as exc:
+            raise SystemExit("Protocol must be inside the repository.") from exc
+    dataset_path = args.dataset_path.resolve() if args.dataset_path else None
+    if dataset_path is not None and not dataset_path.is_file():
+        raise SystemExit(f"Dataset does not exist: {dataset_path}")
+    lineage_checkpoint = (
+        args.lineage_checkpoint.resolve() if args.lineage_checkpoint else None
+    )
+    if lineage_checkpoint is not None and not lineage_checkpoint.is_file():
+        raise SystemExit(f"Lineage checkpoint does not exist: {lineage_checkpoint}")
 
     branch = _git("branch", "--show-current")
     commit = _git("rev-parse", "HEAD")
@@ -501,6 +563,18 @@ def main() -> int:
         "status": "prepared",
         "return_code": None,
         "config_path": str(config_rel),
+        "source_config_sha256": _sha256(config),
+        "resolved_config_sha256": None,
+        "protocol_path": str(protocol_rel) if protocol_rel else None,
+        "protocol_sha256": _sha256(protocol) if protocol else None,
+        "dataset_path": str(dataset_path) if dataset_path else None,
+        "dataset_sha256": _sha256(dataset_path) if dataset_path else None,
+        "lineage_checkpoint_path": (
+            str(lineage_checkpoint) if lineage_checkpoint else None
+        ),
+        "lineage_checkpoint_sha256": (
+            _sha256(lineage_checkpoint) if lineage_checkpoint else None
+        ),
         "resolved_config_path": str(output_dir / "resolved_config.json"),
         "command_path": str(output_dir / "command.txt"),
         "log_path": str(output_dir / "train.log"),
@@ -533,6 +607,7 @@ def main() -> int:
             "Resolved output paths do not match the selected run type archive."
         )
     _write_json(output_dir / "resolved_config.json", resolved_json)
+    metadata["resolved_config_sha256"] = _sha256(output_dir / "resolved_config.json")
     if dirty and args.run_type == "formal":
         (output_dir / "git.diff").write_text(_git("diff"), encoding="utf-8")
     (output_dir / "README.md").write_text(

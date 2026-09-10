@@ -51,16 +51,23 @@ def main() -> int:
     baseline_scalars = _load(args.baseline_run, "scalars.json")
     candidate_scalars = _load(args.candidate_run, "scalars.json")
     candidate_summary = _load(args.candidate_run, "summary.json")
+    baseline_summary = _load(args.baseline_run, "summary.json")
     baseline_curve = _curve(baseline_scalars, args.metric)
     candidate_curve = _curve(candidate_scalars, args.metric)
     common_steps = sorted(set(baseline_curve) & set(candidate_curve))
     if len(common_steps) < 2:
         raise ValueError("Paired comparison requires at least two common evaluations")
 
-    adaptation_start = candidate_summary.get("adaptation_start_step")
+    adaptation_start = candidate_summary.get("adaptation_start_global_step")
     if adaptation_start is None:
-        raise ValueError("Candidate summary has no adaptation_start_step")
+        raise ValueError("Candidate summary has no adaptation_start_global_step")
     adaptation_start = int(adaptation_start)
+    online_start = candidate_summary.get("online_start_global_step")
+    if online_start is None:
+        raise ValueError("Candidate summary has no online_start_global_step")
+    online_start = int(online_start)
+    if baseline_summary.get("online_start_global_step") != online_start:
+        raise ValueError("Paired runs have different online-start coordinates")
     final_step = common_steps[-1]
     if not common_steps[0] <= adaptation_start < final_step:
         raise ValueError("Adaptation start is outside the common evaluation range")
@@ -70,6 +77,7 @@ def main() -> int:
     rows = [
         {
             "global_step": step,
+            "online_step": step - online_start,
             "adaptation_step": step - adaptation_start,
             "baseline": _interpolate(baseline_curve, step),
             "candidate": _interpolate(candidate_curve, step),
@@ -83,8 +91,10 @@ def main() -> int:
         "metric": args.metric,
         "baseline_run": str(args.baseline_run.resolve()),
         "candidate_run": str(args.candidate_run.resolve()),
-        "adaptation_start_step": adaptation_start,
-        "common_final_actual_step": final_step,
+        "online_start_global_step": online_start,
+        "adaptation_start_global_step": adaptation_start,
+        "common_final_global_step": final_step,
+        "common_final_online_step": final_step - online_start,
         "observed_adaptation_horizon": observed_horizon,
         "formal_primary_horizon": args.formal_primary_horizon,
         "formal_primary_complete": observed_horizon >= args.formal_primary_horizon,
@@ -109,7 +119,8 @@ def main() -> int:
         json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
     table = "\n".join(
-        f"| {row['global_step']} | {row['adaptation_step']} | "
+        f"| {row['global_step']} | {row['online_step']} | "
+        f"{row['adaptation_step']} | "
         f"{row['baseline']:.6g} | {row['candidate']:.6g} |"
         for row in rows
     )
@@ -119,16 +130,17 @@ def main() -> int:
 This is engineering evidence, not a paper result.
 
 - Metric: `{args.metric}`
-- Adaptation start: `{adaptation_start}`
-- Common actual endpoint: `{final_step}`
+- Online start global step: `{online_start}`
+- Adaptation start global step: `{adaptation_start}`
+- Common final global / online step: `{final_step}` / `{final_step - online_start}`
 - Observed adaptation horizon: `{observed_horizon}`
 - Formal 0–{args.formal_primary_horizon} AUC complete: `{result["formal_primary_complete"]}`
 - Observed mean AUC (baseline / candidate / difference): """
         f"`{result['observed_auc_mean']['baseline']:.6g}` / "
         f"`{result['observed_auc_mean']['candidate']:.6g}` / "
         f"`{result['observed_auc_mean']['paired_difference']:.6g}`\n\n"
-        "| Global step | Adaptation step | WSRL | Lancet |\n"
-        "|---:|---:|---:|---:|\n" + table + "\n"
+        "| Global step | Online step | Adaptation step | WSRL | Lancet |\n"
+        "|---:|---:|---:|---:|---:|\n" + table + "\n"
     )
     (output_dir / "paired_comparison.md").write_text(markdown, encoding="utf-8")
     print(json.dumps(result, indent=2, sort_keys=True))

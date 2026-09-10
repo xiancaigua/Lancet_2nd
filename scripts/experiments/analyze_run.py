@@ -100,6 +100,8 @@ def main() -> int:
     training_state = state.get("training_state", {})
     extra = state.get("extra", {})
     lancet_state = extra.get("lancet")
+    checkpoint_global_step = int(state.get("global_step", -1))
+    online_start_global_step = extra.get("online_start_step")
     scalars = _scalars(run_dir)
     scalar_ranges = _range_summary(scalars)
     scalar_finite = all(item["finite"] for item in scalar_ranges.values())
@@ -107,9 +109,14 @@ def main() -> int:
     summary: dict[str, Any] = {
         "algorithm_class": checkpoint["metadata"].get("algorithm_class"),
         "checkpoint": str(checkpoint_path),
-        "checkpoint_global_step": int(state.get("global_step", -1)),
+        "checkpoint_global_step": checkpoint_global_step,
         "checkpoint_global_update": int(state.get("global_update", -1)),
-        "online_start_step": extra.get("online_start_step"),
+        "online_start_global_step": online_start_global_step,
+        "checkpoint_online_step": (
+            checkpoint_global_step - int(online_start_global_step)
+            if online_start_global_step is not None
+            else None
+        ),
         "policy_finite": _all_finite(state.get("policy", {})),
         "optimizer_state_finite": _all_finite(state.get("optimizers", {})),
         "optimizer_names": sorted(state.get("optimizers", {})),
@@ -133,11 +140,19 @@ def main() -> int:
             residual_update_count=int(
                 training_state.get("lancet_residual_update_count", 0)
             ),
-            adaptation_start_step=training_state.get("lancet_adaptation_start_step"),
+            adaptation_start_global_step=training_state.get(
+                "lancet_adaptation_start_step"
+            ),
             u_ema=float(training_state.get("lancet_u_ema", 0.0)),
             u_ema_initialized=bool(
                 training_state.get("lancet_u_ema_initialized", False)
             ),
+        )
+        adaptation_start = summary["adaptation_start_global_step"]
+        summary["checkpoint_adaptation_step"] = (
+            checkpoint_global_step - int(adaptation_start)
+            if adaptation_start is not None
+            else None
         )
 
     required_finite = [
@@ -185,7 +200,8 @@ def main() -> int:
                 f"- residual parameter |sum|: {summary['residual_parameter_abs_sum']:.8g}",
                 f"- residual parameters finite: {summary['residual_parameters_finite']}",
                 f"- U EMA initialized/value: {summary['u_ema_initialized']} / {summary['u_ema']:.8g}",
-                f"- adaptation start step: {summary['adaptation_start_step']}",
+                f"- adaptation start global step: {summary['adaptation_start_global_step']}",
+                f"- checkpoint adaptation step: {summary['checkpoint_adaptation_step']}",
             ]
         )
 
@@ -204,6 +220,7 @@ metrics are reported as not collected.
 ## Training Behavior
 
 - checkpoint global step/update: {summary["checkpoint_global_step"]} / {summary["checkpoint_global_update"]}
+- checkpoint online step: {summary["checkpoint_online_step"]}
 - policy tensors finite: {summary["policy_finite"]}
 - optimizer tensors finite: {summary["optimizer_state_finite"]}
 - all collected scalar values finite: {summary["scalar_values_finite"]}
