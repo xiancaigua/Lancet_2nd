@@ -9,7 +9,9 @@ the training runtime.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import datetime as dt
+import fcntl
 import hashlib
 import json
 import os
@@ -85,6 +87,17 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+@contextlib.contextmanager
+def _exclusive_lock(path: Path):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
 
 
 def _parse_json_output(output: str) -> dict:
@@ -558,6 +571,12 @@ def main() -> int:
         "git_diff_path": "git.diff" if dirty and args.run_type == "formal" else None,
         "hardware": _hardware(),
         "gpu_id": args.gpu_id,
+        "gpu_lock_path": (
+            str(HOST_DATA / "locks" / f"gpu_{args.gpu_id}.lock")
+            if args.gpu_id is not None
+            else None
+        ),
+        "gpu_lock_state": "not_requested",
         "start_time": None,
         "end_time": None,
         "status": "prepared",
@@ -614,28 +633,38 @@ def main() -> int:
         _readme(args, metadata, exact_command), encoding="utf-8"
     )
     _write_json(output_dir / "metadata.json", metadata)
-    print(f"prepared: {output_dir}")
+    print(f"prepared: {output_dir}", flush=True)
     if args.prepare_only:
         return 0
 
-    metadata["status"] = "running"
-    metadata["start_time"] = _iso_now()
-    _write_json(output_dir / "metadata.json", metadata)
-    with (output_dir / "train.log").open("w", encoding="utf-8") as log:
-        try:
-            process = subprocess.run(
-                command,
-                cwd=REPO,
-                stdout=log,
-                stderr=subprocess.STDOUT,
-                text=True,
-                check=False,
-            )
-            returncode = process.returncode
-            status = "finished" if returncode == 0 else "failed"
-        except KeyboardInterrupt:
-            returncode = 130
-            status = "stopped"
+    lock_context = contextlib.nullcontext()
+    if args.gpu_id is not None:
+        metadata["gpu_lock_state"] = "waiting"
+        _write_json(output_dir / "metadata.json", metadata)
+        lock_context = _exclusive_lock(Path(metadata["gpu_lock_path"]))
+    with lock_context:
+        if args.gpu_id is not None:
+            metadata["gpu_lock_state"] = "acquired"
+        metadata["status"] = "running"
+        metadata["start_time"] = _iso_now()
+        _write_json(output_dir / "metadata.json", metadata)
+        with (output_dir / "train.log").open("w", encoding="utf-8") as log:
+            try:
+                process = subprocess.run(
+                    command,
+                    cwd=REPO,
+                    stdout=log,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    check=False,
+                )
+                returncode = process.returncode
+                status = "finished" if returncode == 0 else "failed"
+            except KeyboardInterrupt:
+                returncode = 130
+                status = "stopped"
+    if args.gpu_id is not None:
+        metadata["gpu_lock_state"] = "released"
     metadata["return_code"] = returncode
     metadata["end_time"] = _iso_now()
     metadata["status"] = status
@@ -646,9 +675,10 @@ def main() -> int:
     (output_dir / "analysis.md").write_text(
         _analysis(metadata, returncode, log_text, checkpoints), encoding="utf-8"
     )
-    memory = _update_memory(metadata, returncode, checkpoints)
-    _update_current_state(metadata)
-    _update_handoff_index(metadata)
+    with _exclusive_lock(HOST_DATA / "locks" / "continuity.lock"):
+        memory = _update_memory(metadata, returncode, checkpoints)
+        _update_current_state(metadata)
+        _update_handoff_index(metadata)
     print(f"{metadata['status']}: {output_dir}")
     print(f"memory: {memory}")
     return returncode

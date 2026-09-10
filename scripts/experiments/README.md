@@ -12,6 +12,13 @@ stores their SHA256 values together with source/resolved config hashes.
 Online formal forks must also pass `--lineage-checkpoint` so the exact shared
 initializer path and hash are frozen in metadata.
 
+Runs with `--gpu-id N` acquire the Host lock
+`/home/zhaozihan/Lancet/data/locks/gpu_N.lock` before training. Multiple
+pre-registered runs assigned to one GPU therefore queue safely; metadata shows
+`gpu_lock_state` as `waiting`, `acquired`, or `released`. Completion-time Agent Memory,
+current-state, and Handoff updates are serialized with a separate continuity
+lock.
+
 ```bash
 python3 scripts/experiments/archive_run.py \
   --run-type smoke --algorithm wsrl \

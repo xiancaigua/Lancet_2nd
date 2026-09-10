@@ -8,6 +8,7 @@ Current state: [`../CURRENT_STATE.md`](../CURRENT_STATE.md)
 
 | Seq | Date | Topic | Status | File |
 |---|---|---|---|---|
+| 002 | 2026-09-11 | Formal GPU queue | completed | [memory](2026-09-11_002_formal-gpu-queue.md) |
 | 001 | 2026-09-11 | Formal identity and coordinates | completed | [memory](2026-09-11_001_formal-identity-and-coordinates.md) |
 | 004 | 2026-09-10 | Pilot analysis and readiness | completed | [memory](2026-09-10_004_pilot-analysis-and-readiness.md) |
 | 003 | 2026-09-10 | lancet debug | completed | [memory](2026-09-10_003_lancet-antmaze-medium-play-v2-debug.md) |
@@ -58,6 +59,7 @@ was not independently recorded.
 
 ### Dataset / experiments
 
+- [Formal GPU queue](2026-09-11_002_formal-gpu-queue.md)
 - [Formal identity and coordinates](2026-09-11_001_formal-identity-and-coordinates.md)
 
 - [Pilot analysis and readiness](2026-09-10_004_pilot-analysis-and-readiness.md)

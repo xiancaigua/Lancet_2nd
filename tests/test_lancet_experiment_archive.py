@@ -45,6 +45,12 @@ def test_sha256_streams_file(tmp_path):
     )
 
 
+def test_exclusive_lock_uses_persistent_lock_file(tmp_path):
+    lock_path = tmp_path / "locks" / "gpu_0.lock"
+    with archive._exclusive_lock(lock_path):
+        assert lock_path.is_file()
+
+
 def test_archive_paths_map_only_below_data_root(tmp_path, monkeypatch):
     monkeypatch.setattr(archive, "HOST_DATA", tmp_path)
     assert (
