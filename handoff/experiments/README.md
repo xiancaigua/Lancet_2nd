@@ -7,7 +7,7 @@ authoritative record. This page is a human-readable index only.
 
 | Protocol | Scope | Status | Entry point |
 |---|---|---|---|
-| AntMaze WSRL vs Lancet | `antmaze-medium-play-v2`; 5 paired seeds; Raw/Centered ablations | planned; not started; smoke and seed-0 pilot are current gates | [`antmaze_wsrl_lancet.md`](../../experiments/protocols/antmaze_wsrl_lancet.md) |
+| AntMaze WSRL vs Lancet | `antmaze-medium-play-v2`; 5 paired seeds; Raw/Centered ablations | shared offline initializer stage running; online not started | [`antmaze_wsrl_lancet.md`](../../experiments/protocols/antmaze_wsrl_lancet.md) |
 | Legacy WSRL vs Lancet V1 | `antmaze-medium-play-v2`, 5 paired seeds | superseded; never started; historical only | [`antmaze_wsrl_lancet_v1.md`](../../experiments/protocols/antmaze_wsrl_lancet_v1.md) |
 
 ## Smoke
@@ -33,8 +33,12 @@ authoritative record. This page is a human-readable index only.
 
 | Env | Algo | Seed | Status | Main metric | Output |
 |---|---|---|---|---|---|
+| antmaze-medium-play-v2 | wsrl-initializer | 0 | running on GPU 2 | initializer validation pending | `/home/zhaozihan/Lancet/data/runs/formal/antmaze-medium-play-v2/wsrl-initializer/seed_0/20260911_013042` |
+| antmaze-medium-play-v2 | wsrl-initializer | 1 | running on GPU 4 | initializer validation pending | `/home/zhaozihan/Lancet/data/runs/formal/antmaze-medium-play-v2/wsrl-initializer/seed_1/20260911_013042` |
+| antmaze-medium-play-v2 | wsrl-initializer | 2 | queued for GPU 2 | not collected | `/home/zhaozihan/Lancet/data/runs/formal/antmaze-medium-play-v2/wsrl-initializer/seed_2/20260911_013834` |
+| antmaze-medium-play-v2 | wsrl-initializer | 3 | queued for GPU 4 | not collected | `/home/zhaozihan/Lancet/data/runs/formal/antmaze-medium-play-v2/wsrl-initializer/seed_3/20260911_013834` |
+| antmaze-medium-play-v2 | wsrl-initializer | 4 | queued for GPU 2 | not collected | `/home/zhaozihan/Lancet/data/runs/formal/antmaze-medium-play-v2/wsrl-initializer/seed_4/20260911_013834` |
 <!-- formal-rows -->
 
-No formal experiment has been started. `runs/formal/` and
-`checkpoints/formal/` were verified empty on 2026-09-10 after the stability
-gate; recheck immediately before any formal launch.
+Formal initializer training started on 2026-09-11 from frozen commit `6281763`.
+The online main comparison and component ablations have not started.

@@ -1,13 +1,13 @@
 # Lancet Current Agent State
 
-Last updated: 2026-09-10 11:05 CST
+Last updated: 2026-09-11 01:47 CST
 Branch: `main`
-Commit: `991991d1e6e77fbe42b95d2cc8a82faa376601b8` plus experiment archive evidence
+Commit: formal training identity `62817637beffcbe8b1315d3c0daf03f1fc5fd9a0`
 
 ## Current objective
 
-Freeze formal experiment identity and launch the five seed-specific shared
-WSRL offline initializers. Lancet algorithm design is closed.
+Monitor and validate the five seed-specific shared WSRL offline initializers.
+Lancet algorithm design and the formal protocol are frozen.
 
 ## Repository and runtime
 
@@ -60,9 +60,13 @@ active at lambda=1 for 50k adaptation steps, then update/correction are off.
   at 25,056 and completed 60,160 residual updates; logged Delta/Q ratio stayed
   below `7.13e-4`. Both short debug curves were identically zero, so no
   performance claim is supported.
-- Formal benchmark (not started).
-- The user accepted the implementation/review gates and authorized formal
-  initialization; formal identity hashing and launch are in progress.
+- Formal initializer archives for seeds 0–4 were created from clean, pushed
+  commit `6281763`. Seeds 0/1 are training on physical GPUs 2/4; seeds 2/3/4
+  are safely queued under per-GPU locks.
+- At the first health check, seeds 0/1 had passed update 9,000 with finite
+  logged losses/Q values and no NaN/Inf/OOM/traceback signal.
+- Formal online branches have not started and may start only after all five
+  initializers pass finite-state, hash, and reload validation.
 
 ## Environment status
 
@@ -81,13 +85,17 @@ active at lambda=1 for 50k adaptation steps, then update/correction are off.
 - Raw/Centered/Lancet share capacity, initialization, local actions, optimizer,
   lifecycle, and checkpoint machinery.
 - Formal requires a clean pushed frozen commit and all runtime gates.
+- Frozen hashes: dataset `c9fec1c1...7e5b`, source initializer config
+  `5af6bf32...4233`, protocol `d17fb7e4...051d`.
+- Do not modify training code/config during these runs. Preserve and invalidate
+  archives rather than overwriting if a real bug is found.
 
 ## Immediate next steps
 
-1. Commit/push coordinate and formal-identity archive changes.
-2. Freeze dataset/config/protocol hashes and recheck formal roots.
-3. Launch five archived 1M shared WSRL initializers on explicit GPUs.
-4. Monitor numerical/checkpoint health without performance intervention.
+1. Monitor seed 0/1 numerical and checkpoint health without score-based intervention.
+2. Let queued seeds acquire GPU 2/4 automatically; do not bypass the locks.
+3. Validate each `offline_final.pt` for completion, finite state, hash, and reload.
+4. Run shared-fork equality per seed before any formal online branch.
 
 ## Read next
 
