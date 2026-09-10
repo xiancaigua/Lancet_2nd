@@ -5,7 +5,8 @@
 The current planned scientific entry point is
 [`experiments/protocols/antmaze_wsrl_lancet.md`](../experiments/protocols/antmaze_wsrl_lancet.md).
 It covers WSRL, capacity-matched Raw and Centered residual ablations, and
-current Lancet on `antmaze-medium-play-v2`. The implementation exists in the working tree, but no current-Lancet pilot or formal run has started.
+current Lancet on `antmaze-medium-play-v2`. Current-method tiny smoke and the
+paired seed-0 20k debug pilot passed; no formal run has started.
 
 [`antmaze_wsrl_lancet_v1.md`](../experiments/protocols/antmaze_wsrl_lancet_v1.md)
 is retained only as the never-executed Lancet V1 shared-scalar protocol.
@@ -95,14 +96,12 @@ formal. No existing checkpoint required classification.
 
 The required order is:
 
-1. human review of `docs/design/lancet-implementation.md` and the current protocol;
-2. validate `lancet` with focused and regression tests without changing WSRL's base
-   target or critic update;
-3. run one archived tiny real-data Lancet smoke;
-4. review shared-initializer and online-fork configs, deterministic eval
-   seed, common actual endpoint evaluation, diagnostics, lineage metadata, and
-   periodic checkpoint cadence;
-5. run the archived seed-0 debug pilot from the current protocol;
-6. freeze a clean pushed commit and only then authorize formal execution.
+1. current Lancet implementation and baseline regression validation (done);
+2. archived tiny real-data shared-fork smoke (done);
+3. archived seed-0 20k shared initializer and paired online pilot (done);
+4. evidence-based checkpoint/scalar/paired-AUC analysis (done);
+5. human-review and push a clean frozen evidence commit (pending);
+6. recheck formal roots and explicitly authorize the five archived 1M shared
+   offline initializers before any online formal branch (pending).
 
 Do not run the Lancet V1 pilot as a substitute for current Lancet validation.

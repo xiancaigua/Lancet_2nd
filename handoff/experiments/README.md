@@ -16,12 +16,17 @@ authoritative record. This page is a human-readable index only.
 |---|---|---|---|
 | 20260908_123022 | finished | WSRL 1M data, offline→online, updates, save/reload passed | `/home/zhaozihan/Lancet/data/runs/smoke/antmaze-medium-play-v2/wsrl/seed_0/20260908_123022` |
 | 20260908_123802 | finished | Lancet V1 shared-scalar residual updated/logged/checkpointed/reloaded; finite losses | `/home/zhaozihan/Lancet/data/runs/smoke/antmaze-medium-play-v2/lancet/seed_0/20260908_123802` |
+| 20260909_215057 | finished | real 1M data; shared checkpoint finite/reload passed | `/home/zhaozihan/Lancet/data/runs/smoke/antmaze-medium-play-v2/wsrl-lancet-initializer/seed_0/20260909_215057` |
+| 20260909_215436 | finished | current Lancet residual updated; finite/reload passed | `/home/zhaozihan/Lancet/data/runs/smoke/antmaze-medium-play-v2/lancet/seed_0/20260909_215436` |
 <!-- smoke-rows -->
 
 ## Debug
 
 | Experiment | Status | Main result | Output |
 |---|---|---|---|
+| 20260910_091819 | finished | 20k shared initializer finite; reload passed | `/home/zhaozihan/Lancet/data/runs/debug/antmaze-medium-play-v2/wsrl-lancet-initializer/seed_0/20260910_091819` |
+| 20260910_095226 | finished | WSRL actual step 40032; finite/reload; 11 evals=0 | `/home/zhaozihan/Lancet/data/runs/debug/antmaze-medium-play-v2/wsrl/seed_0/20260910_095226` |
+| 20260910_102445 | finished | Lancet actual step 40032; 60160 residual updates; finite/reload; paired debug AUC=0 | `/home/zhaozihan/Lancet/data/runs/debug/antmaze-medium-play-v2/lancet/seed_0/20260910_102445` |
 <!-- debug-rows -->
 
 ## Formal
@@ -31,4 +36,5 @@ authoritative record. This page is a human-readable index only.
 <!-- formal-rows -->
 
 No formal experiment has been started. `runs/formal/` and
-`checkpoints/formal/` were verified empty on 2026-09-09 after the current protocol revision.
+`checkpoints/formal/` were verified empty on 2026-09-10 after the stability
+gate; recheck immediately before any formal launch.

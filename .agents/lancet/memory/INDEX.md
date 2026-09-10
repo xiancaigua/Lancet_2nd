@@ -8,6 +8,12 @@ Current state: [`../CURRENT_STATE.md`](../CURRENT_STATE.md)
 
 | Seq | Date | Topic | Status | File |
 |---|---|---|---|---|
+| 004 | 2026-09-10 | Pilot analysis and readiness | completed | [memory](2026-09-10_004_pilot-analysis-and-readiness.md) |
+| 003 | 2026-09-10 | lancet debug | completed | [memory](2026-09-10_003_lancet-antmaze-medium-play-v2-debug.md) |
+| 002 | 2026-09-10 | wsrl debug | completed | [memory](2026-09-10_002_wsrl-antmaze-medium-play-v2-debug.md) |
+| 001 | 2026-09-10 | wsrl-lancet-initializer debug | completed | [memory](2026-09-10_001_wsrl-lancet-initializer-antmaze-medium-play-v2-debug.md) |
+| 006 | 2026-09-09 | lancet smoke | completed | [memory](2026-09-09_006_lancet-antmaze-medium-play-v2-smoke.md) |
+| 005 | 2026-09-09 | wsrl-lancet-initializer smoke | completed | [memory](2026-09-09_005_wsrl-lancet-initializer-antmaze-medium-play-v2-smoke.md) |
 | 004 | 2026-09-09 | Current Lancet implementation | completed | [memory](2026-09-09_004_lancet-implementation.md) |
 | 003 | 2026-09-09 | Lancet specification finalized | completed | [memory](2026-09-09_003_lancet-specification-finalized.md) |
 | 002 | 2026-09-09 | Lancet v3 benchmark protocol | completed | [memory](2026-09-09_002_lancet-v3-benchmark-protocol.md) |
@@ -50,6 +56,18 @@ was not independently recorded.
 - [Lancet residual scaffold](2026-09-07_004_lancet-residual-scaffold.md)
 
 ### Dataset / experiments
+
+- [Pilot analysis and readiness](2026-09-10_004_pilot-analysis-and-readiness.md)
+
+- [lancet debug](2026-09-10_003_lancet-antmaze-medium-play-v2-debug.md)
+
+- [wsrl debug](2026-09-10_002_wsrl-antmaze-medium-play-v2-debug.md)
+
+- [wsrl-lancet-initializer debug](2026-09-10_001_wsrl-lancet-initializer-antmaze-medium-play-v2-debug.md)
+
+- [lancet smoke](2026-09-09_006_lancet-antmaze-medium-play-v2-smoke.md)
+
+- [wsrl-lancet-initializer smoke](2026-09-09_005_wsrl-lancet-initializer-antmaze-medium-play-v2-smoke.md)
 
 - [Lancet v3 benchmark protocol](2026-09-09_002_lancet-v3-benchmark-protocol.md)
 - [Formal benchmark protocol drafted](2026-09-08_008_formal-benchmark-protocol-drafted.md)

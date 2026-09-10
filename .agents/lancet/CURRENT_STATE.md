@@ -1,13 +1,13 @@
 # Lancet Current Agent State
 
-Last updated: 2026-09-09
+Last updated: 2026-09-10 11:05 CST
 Branch: `main`
-Commit: `51d014d058605f92ecc823ea3b2b42ef25ab4dd3` plus the reviewed implementation worktree
+Commit: `991991d1e6e77fbe42b95d2cc8a82faa376601b8` plus experiment archive evidence
 
 ## Current objective
 
-Validate current Lancet on real AntMaze data and through paired seed-0 20k
-debug pilots. Formal benchmarks remain unauthorized.
+Close the validated Lancet implementation at a clean evidence commit and hand
+it to a human for review/push. Formal benchmarks remain unstarted.
 
 ## Repository and runtime
 
@@ -51,11 +51,18 @@ active at lambda=1 for 50k adaptation steps, then update/correction are off.
 - Aggregate affected suite: 211 passed; later evaluation regression: 93 passed;
   focused lint and archive/Lancet tests pass.
 
-### Runtime evidence still pending
+### Runtime evidence
 
-- Current Lancet archived real-data tiny smoke.
-- Shared seed-0 20k WSRL/Lancet stability pilot.
+- Shared-checkpoint WSRL initializer and current Lancet real-data tiny smoke passed finite-state and agent-construction reload validation.
+- Seed-0 shared 20k WSRL initializer and paired 20k online WSRL/Lancet
+  branches passed finite-state, evaluation, and agent-construction reload.
+- Both online branches ended at actual step 40,032. Lancet started adaptation
+  at 25,056 and completed 60,160 residual updates; logged Delta/Q ratio stayed
+  below `7.13e-4`. Both short debug curves were identically zero, so no
+  performance claim is supported.
 - Formal benchmark (not started).
+- Readiness: **NOT READY FOR FORMAL** only because the final evidence commit
+  still needs human review and push; implementation/runtime gates passed.
 
 ## Environment status
 
@@ -76,10 +83,11 @@ active at lambda=1 for 50k adaptation steps, then update/correction are off.
 
 ## Immediate next steps
 
-1. Commit the reviewed implementation at a clean local revision.
-2. Run the archived shared-checkpoint tiny smoke.
-3. Run the detached paired seed-0 20k debug pilots and analyze evidence.
-4. Record one explicit formal-readiness decision; do not launch formal runs.
+1. Review and commit validation tooling, memories, and handoff updates.
+2. Human-review and push the frozen commits to `origin`.
+3. Recheck empty formal roots, then prepare the five archived 1M shared WSRL
+   initializers only after explicit formal-launch authorization.
+4. Do not launch unarchived or outcome-selected runs.
 
 ## Read next
 

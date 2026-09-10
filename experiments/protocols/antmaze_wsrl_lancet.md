@@ -1,6 +1,6 @@
 # AntMaze WSRL vs Lancet Benchmark Protocol
 
-Status: **pre-registered; implementation validation in progress; formal runs not started**
+Status: **pre-registered; implementation/runtime gates passed; formal runs not started**
 Protocol date: 2026-09-09
 Environment: `antmaze-medium-play-v2`
 Implementation contract: `docs/design/lancet-implementation.md`
@@ -266,12 +266,14 @@ archives explicitly. Poor return or an unfavorable seed never permits rerun.
 - [x] Raw/Centered/Lancet matched-machinery behavior verified.
 - [x] Shared checkpoint base-state and zero-correction equality verified.
 - [x] Evaluation seed, adaptation coordinates, and common endpoint verified.
-- [ ] Tiny real-data smoke passed.
-- [ ] WSRL seed-0 debug pilot passed.
-- [ ] Lancet seed-0 debug pilot passed.
-- [ ] Diagnostics and reload are finite and complete.
+- [x] Tiny real-data smoke passed.
+- [x] WSRL seed-0 debug pilot passed.
+- [x] Lancet seed-0 debug pilot passed.
+- [x] Diagnostics and reload are finite (except peak-memory scalar, which was
+  not collected; no OOM occurred).
 - [ ] Formal configs, dataset/checkpoint hashes, commit, and matrix frozen.
-- [ ] Formal roots checked before launch.
+- [ ] Final clean commit human-reviewed and pushed.
+- [ ] Formal roots rechecked immediately before launch.
 
 Formal launch remains unauthorized until every applicable item passes.
 

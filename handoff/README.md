@@ -1,19 +1,22 @@
 # Lancet Engineering Handoff
 
-Last audited: 2026-09-08  
-Branch/commit: `main` / `477abdac2f1e297c6ede82aafde20ce90b65de4b`
+Last audited: 2026-09-10
+Branch/implementation commit: `main` / `991991d1e6e77fbe42b95d2cc8a82faa376601b8`
 
 ## Project goal and current state
 
 Lancet is an offline-to-online critic-correction extension of rl-garden's
 WSRL implementation. The persistent CUDA/D4RL runtime, one-checkout bind-mount
-model, AntMaze dataset, Lancet v1 scaffold, unit tests, experiment archive
-launcher, and independent audits exist.
+model, AntMaze dataset, current Lancet implementation, historical Lancet V1,
+unit/regression tests, experiment archive launcher, and audits exist.
 
-- Completed: runtime, D4RL/MuJoCo, GPU/mount validation, Lancet residual path,
-  continuity migration, run-type separation, archival/audit tooling, and archived real-data WSRL/Lancet tiny smokes.
-- Partial: the fair formal checkpoint/config/metric/seed protocol is not frozen or committed.
-- Not implemented: action-dependent U-variation loss; no formula was invented.
+- Completed: runtime, D4RL/MuJoCo, GPU/mount validation, current Lancet,
+  continuity/archival tooling, current-method tiny smoke, and the paired
+  seed-0 20k stability gate.
+- Partial: formal configs/protocol exist, but the final evidence commit still
+  needs human review/push and formal checkpoint hashes do not exist yet.
+- Current U semantics: detached REDQ action-disagreement weighting of residual
+  fitting. There is intentionally no separate U loss or prediction target.
 - Not started: formal or multi-seed benchmark.
 
 ## Read in this order

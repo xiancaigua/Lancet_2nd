@@ -1,20 +1,24 @@
 # Known issues and next steps
 
-## P0 — validation gates before formal work
+## P0 — remaining launch gates
 
-1. Create a clean implementation commit after final diff/review.
-2. Run one archived shared-checkpoint AntMaze tiny smoke for current Lancet.
-3. Run the archived seed-0 20k WSRL/Lancet stability pilot.
-4. Inspect finite losses, Q/Delta/U/weights, correction ratios, evaluation,
-   GPU memory, and checkpoint reload before issuing formal readiness.
+The implementation, current-method tiny smoke, seed-0 shared initializer,
+paired 20k online pilot, checkpoint reload, and finite diagnostics passed.
+Before formal work:
 
-Formal training remains unauthorized until these gates pass.
+1. Human-review the frozen implementation and evidence commits.
+2. Push the chosen clean commit to `origin`; formal metadata must reference
+   that immutable remote commit.
+3. Reconfirm empty formal roots and prepare the five seed-specific shared
+   offline initializer archives, configs, and hashes.
+
+Formal training remains unstarted and unauthorized in the current session.
 
 ## P1 — benchmark operations
 
 1. Freeze five seed-specific WSRL 1M offline initializer configs and hashes.
-2. Verify the common actual endpoint, adaptation-coordinate AUC analysis, and
-   deterministic evaluation stream on pilot archives.
+2. Use the now-verified common actual endpoint and adaptation-coordinate AUC
+   tooling; the debug pilot reached only adaptation step 14,976, not 50k.
 3. Freeze the shared commit/config/dataset lineage and empty formal roots.
 4. Schedule the 10-run WSRL-vs-Lancet main table; schedule Raw/Centered
    component ablations afterward without outcome-based selection.
@@ -37,9 +41,13 @@ after seeing results.
   audits passed.
 - Kitchen dataset validation is not required for the first AntMaze benchmark.
 - Long runs must use Host tmux/scheduler around the archive launcher.
+- The pilot did not log peak per-process CUDA memory, although no OOM occurred.
+- WSRL and Lancet both scored 0 throughout this short pilot; this is not a
+  failure of the stability gate and provides no performance claim.
 
 ## Current decision
 
-The current Lancet implementation and focused tests exist in the working tree.
-Formal readiness is still pending real-data tiny smoke and the seed-0 20k
-stability pilot. No formal run has started.
+**NOT READY FOR FORMAL** operationally: the scientific/runtime gates passed,
+but the final evidence commit is not yet human-reviewed and pushed. After that
+small release gate, the next benchmark action is the five archived 1M shared
+WSRL offline initializers—not untracked online runs. No formal run has started.

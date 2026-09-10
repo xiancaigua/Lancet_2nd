@@ -21,3 +21,29 @@ python3 scripts/experiments/archive_run.py \
 `--gpu-id N` records the physical GPU and executes the container command with only that GPU visible. `--method-label raw-residual` (or `centered-residual`) keeps ablation archives separate while the executable registry remains `lancet`.
 
 Arguments after `--` are forwarded to the training CLI and recorded verbatim.
+
+After a run, validate its final checkpoint and merge every TensorBoard event
+file (including the end-of-run hparam file) with:
+
+```bash
+./dev d4rl python scripts/experiments/analyze_run.py \
+  --run-dir /data/lancet/runs/<type>/<run> \
+  --checkpoint /data/lancet/checkpoints/<type>/<run>/final.pt \
+  --reload-verified
+```
+
+Use `--reload-verified` only after a separate training-CLI `--dry-run` has
+successfully constructed the agent and loaded that checkpoint. The analyzer
+writes `metrics/{summary,scalars}.json` and evidence-based `analysis.md`.
+
+For a paired debug/formal archive whose Lancet summary contains the adaptation
+start coordinate:
+
+```bash
+./dev d4rl python scripts/experiments/compare_runs.py \
+  --baseline-run /data/lancet/runs/<type>/<wsrl-run> \
+  --candidate-run /data/lancet/runs/<type>/<lancet-run>
+```
+
+This writes `paired_comparison.{json,md}` under the candidate's `metrics/` and
+explicitly reports whether the formal 0–50k adaptation horizon is complete.
