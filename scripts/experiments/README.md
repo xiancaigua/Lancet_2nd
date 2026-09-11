@@ -41,6 +41,11 @@ non-invasive attach mode; they are never restarted. A managed worker exists
 only while an assigned training command is running, and training still enters
 through the exact archived `./dev d4rl ...` command.
 
+Initializer validation is not just two successful loads:
+`validate_shared_fork.py` directly compares the loaded WSRL/Lancet base policy,
+target/base critics, alpha, optimizer states, and counters, then verifies the
+new Lancet residual is exactly zero and `Q_use == Q_base`.
+
 ```bash
 python3 scripts/experiments/archive_run.py \
   --run-type smoke --algorithm wsrl \

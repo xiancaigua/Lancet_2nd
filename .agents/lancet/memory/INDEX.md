@@ -8,6 +8,7 @@ Current state: [`../CURRENT_STATE.md`](../CURRENT_STATE.md)
 
 | Seq | Date | Topic | Status | File |
 |---|---|---|---|---|
+| 011 | 2026-09-11 | Shared-fork runtime gate | completed | [memory](2026-09-11_011_shared-fork-runtime-gate.md) |
 | 010 | 2026-09-11 | Dynamic formal queue activated | completed | [memory](2026-09-11_010_dynamic-queue-activated.md) |
 | 009 | 2026-09-11 | Dynamic formal lifecycle implementation | completed | [memory](2026-09-11_009_dynamic-lifecycle-implementation.md) |
 | 008 | 2026-09-11 | Fixed-GPU waiters retired | completed | [memory](2026-09-11_008_fixed-waiters-retired.md) |
@@ -101,5 +102,6 @@ was not independently recorded.
 
 ### Continuity / tests
 
+- [Shared-fork runtime gate](2026-09-11_011_shared-fork-runtime-gate.md)
 - [Final validation and launcher hardening](2026-09-08_007_final-validation-and-launcher-hardening.md)
 - [Agent continuity and handoff](2026-09-07_006_agent-continuity-and-handoff.md)

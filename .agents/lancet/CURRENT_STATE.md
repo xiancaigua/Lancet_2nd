@@ -103,6 +103,9 @@ active at lambda=1 for 50k adaptation steps, then update/correction are off.
   It uses an approximately 5h normal cycle, atomic state/progress files,
   stable capacity sampling, one formal job per GPU, and attach mode for seed
   0/1. It does not import the algorithm or add training/evaluation work.
+- Initializer completion directly compares the WSRL and Lancet forked policy,
+  base/target critics, alpha, base optimizer states, counters, exact-zero
+  residual, and `Q_use==Q_base` on CPU before online archive preparation.
 - Its first stable resource pass found no safe new GPU, so seeds 2/3/4 remain
   queued with no worker, training PID, or CUDA context. Their QUEUED email
   transitions were each accepted once.

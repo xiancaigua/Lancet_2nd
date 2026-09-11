@@ -463,6 +463,12 @@ def _validate_initializer(state_path: Path, job_id: str) -> bool:
                 ["./dev", "d4rl", "python", "scripts/experiments/validate_checkpoint_finite.py", "--checkpoint", container_checkpoint, "--expected-updates", "1000000"],
             )
         )
+        commands.append(
+            (
+                "shared_fork_equality",
+                ["./dev", "d4rl", "python", "scripts/experiments/validate_shared_fork.py", "--checkpoint", container_checkpoint],
+            )
+        )
         for algorithm, config in (
             ("wsrl", "configs/off2on/wsrl_antmaze_medium_play_v2_online.yaml"),
             ("lancet", "configs/off2on/lancet_antmaze_medium_play_v2.yaml"),
