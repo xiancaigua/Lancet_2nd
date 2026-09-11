@@ -98,8 +98,8 @@ active at lambda=1 for 50k adaptation steps, then update/correction are off.
   SMTP was tested; lifecycle notifications are state-transition-only and their
   failures cannot fail or relabel a training run.
 - `scripts/experiments/run_training.py` is the single queue/watch entry point;
-  tmux `lancet_formal_lifecycle` is active with PID 3253176 and infrastructure
-  commit `111839e0fa2123f2f05b506b5529c3edb22924b2`.
+  tmux `lancet_formal_lifecycle` is active with PID 3349706 and infrastructure
+  commit `8df369138640c076aeef9293cd3736e86be8f787`.
   It uses an approximately 5h normal cycle, atomic state/progress files,
   stable capacity sampling, one formal job per GPU, and attach mode for seed
   0/1. It does not import the algorithm or add training/evaluation work.
