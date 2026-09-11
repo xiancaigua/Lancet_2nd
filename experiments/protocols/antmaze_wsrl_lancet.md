@@ -286,7 +286,7 @@ archives explicitly. Poor return or an unfavorable seed never permits rerun.
 - [x] Formal roots checked and five initializer archives created.
 - [x] Initializer seeds 0/1 confirmed running; seeds 2–4 remain unstarted and
   are eligible for dynamic re-queue.
-- [ ] Dynamic lifecycle infrastructure commit pushed and recorded.
+- [x] Dynamic lifecycle infrastructure commit `111839e0` pushed and recorded.
 - [ ] Every seed-specific initializer/fork validation passed before its online pair.
 
 Formal initializer execution is active. Each online pair remains gated on its

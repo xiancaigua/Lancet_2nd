@@ -1,6 +1,6 @@
 # Lancet Current Agent State
 
-Last updated: 2026-09-11 12:20 CST
+Last updated: 2026-09-11 12:46 CST
 Branch: `main`
 Commit: this credentials-preparation commit; formal training identity remains `62817637beffcbe8b1315d3c0daf03f1fc5fd9a0`
 
@@ -97,10 +97,15 @@ active at lambda=1 for 50k adaptation steps, then update/correction are off.
 - Local email credentials live in ignored `configs/local/lancet_email.env`.
   SMTP was tested; lifecycle notifications are state-transition-only and their
   failures cannot fail or relabel a training run.
-- `scripts/experiments/run_training.py` is the single queue/watch entry point.
+- `scripts/experiments/run_training.py` is the single queue/watch entry point;
+  tmux `lancet_formal_lifecycle` is active with PID 3253176 and infrastructure
+  commit `111839e0fa2123f2f05b506b5529c3edb22924b2`.
   It uses an approximately 5h normal cycle, atomic state/progress files,
   stable capacity sampling, one formal job per GPU, and attach mode for seed
   0/1. It does not import the algorithm or add training/evaluation work.
+- Its first stable resource pass found no safe new GPU, so seeds 2/3/4 remain
+  queued with no worker, training PID, or CUDA context. Their QUEUED email
+  transitions were each accepted once.
 - Do not modify training code/config during these runs. Preserve and invalidate
   archives rather than overwriting if a real bug is found.
 

@@ -52,6 +52,8 @@ after seeing results.
 
 The implementation/review gates passed at pushed algorithm commit `6281763`.
 Initializer seeds 0/1 continue unchanged; old fixed waiters for 2/3/4 were
-retired before any update and are being transferred to the dynamic queue.
+retired before any update and are now in the active dynamic queue. The first
+stable gate pass found no safe additional GPU, so no managed worker was
+started.
 WSRL and Lancet online logging are now both TensorBoard; no scientific setting
 changed.

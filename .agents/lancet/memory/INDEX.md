@@ -8,6 +8,7 @@ Current state: [`../CURRENT_STATE.md`](../CURRENT_STATE.md)
 
 | Seq | Date | Topic | Status | File |
 |---|---|---|---|---|
+| 010 | 2026-09-11 | Dynamic formal queue activated | completed | [memory](2026-09-11_010_dynamic-queue-activated.md) |
 | 009 | 2026-09-11 | Dynamic formal lifecycle implementation | completed | [memory](2026-09-11_009_dynamic-lifecycle-implementation.md) |
 | 008 | 2026-09-11 | Fixed-GPU waiters retired | completed | [memory](2026-09-11_008_fixed-waiters-retired.md) |
 | 007 | 2026-09-11 | SMTP test | completed | [memory](2026-09-11_007_smtp-test.md) |
@@ -69,6 +70,7 @@ was not independently recorded.
 
 ### Dataset / experiments
 
+- [Dynamic formal queue activated](2026-09-11_010_dynamic-queue-activated.md)
 - [Fixed-GPU waiters retired](2026-09-11_008_fixed-waiters-retired.md)
 - [Formal state and semantics audit](2026-09-11_005_formal-state-and-semantics-audit.md)
 - [Formal initializers launched](2026-09-11_004_formal-initializers-launched.md)
