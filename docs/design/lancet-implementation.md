@@ -308,6 +308,16 @@ residual optimizers are never involved in this path.
 
 ## 11. Online handoff lifecycle
 
+### Offline UTD interpretation
+
+The current off2on runner calls `run_offline_pretraining(...,
+gradient_steps=1)`. With a configured integer `utd=4`, `SACCore.train()`
+therefore takes its one-step remainder path with a temporary `utd=1`. One
+million offline steps correspond to approximately one million full-batch
+critic update units; they must not be described as four 256-example online
+high-UTD minibatch updates per offline step. This records existing behavior and
+does not change the frozen initializer.
+
 Residual behavior is explicitly phase-gated:
 
 - offline (`_online_start_step is None`): no residual update or actor effect;

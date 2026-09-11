@@ -9,6 +9,8 @@ Five 1M shared initializer archives are active or queued; before online work:
 1. Let seeds 0–4 finish without score-based stopping or reruns.
 2. Validate update count, finite model/optimizer state, checkpoint hash, and reload.
 3. Verify seed-matched shared-fork base-state equality and Lancet zero correction.
+4. Before online launch, explicitly align or approve the resolved logging
+   backend difference: WSRL is TensorBoard and Lancet is currently WandB.
 
 Formal online training remains unstarted until these gates pass.
 

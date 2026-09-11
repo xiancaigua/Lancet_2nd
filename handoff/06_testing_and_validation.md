@@ -70,4 +70,19 @@ archive's `metrics/paired_comparison.{json,md}`.
 
 - Peak per-process CUDA memory was not collected as a scalar; no OOM occurred.
 - Kitchen is not fetched and is not a blocker for the first AntMaze study.
-- Formal benchmark has not started.
+- Formal initializer seeds 0/1 are running; seeds 2/3/4 are queued.
+
+## Formal pre-online audit (2026-09-11)
+
+- Offline pretraining passes `gradient_steps=1`. Although the initializer YAML
+  retains `utd=4`, the SAC remainder path performs one full-batch update unit
+  per offline step; this is not online-style four-way high UTD.
+- CPU dry-run comparison found all frozen WSRL/Lancet base training values
+  equal, including Bellman/CQL/Cal-QL parameters, network shape, replay,
+  UTD/batch/warmup, learning rates, evaluation, and checkpoint cadence.
+- The only non-Lancet resolved difference is logging: WSRL uses TensorBoard,
+  while Lancet currently resolves to WandB. This does not affect the running
+  shared initializers, but must be resolved explicitly before online formal.
+- Analysis reports distinct global, online, and adaptation coordinates. The
+  paired analyzer now computes Primary Adaptation AUC on the exact fixed 0–50k
+  window instead of allowing a longer observed horizon to stand in for it.

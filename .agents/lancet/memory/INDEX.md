@@ -8,6 +8,7 @@ Current state: [`../CURRENT_STATE.md`](../CURRENT_STATE.md)
 
 | Seq | Date | Topic | Status | File |
 |---|---|---|---|---|
+| 005 | 2026-09-11 | Formal state and semantics audit | completed | [memory](2026-09-11_005_formal-state-and-semantics-audit.md) |
 | 004 | 2026-09-11 | Formal initializers launched | partial | [memory](2026-09-11_004_formal-initializers-launched.md) |
 | 003 | 2026-09-11 | External GPU capacity gate | completed | [memory](2026-09-11_003_external-gpu-capacity-gate.md) |
 | 002 | 2026-09-11 | Formal GPU queue | completed | [memory](2026-09-11_002_formal-gpu-queue.md) |
@@ -61,6 +62,7 @@ was not independently recorded.
 
 ### Dataset / experiments
 
+- [Formal state and semantics audit](2026-09-11_005_formal-state-and-semantics-audit.md)
 - [Formal initializers launched](2026-09-11_004_formal-initializers-launched.md)
 - [External GPU capacity gate](2026-09-11_003_external-gpu-capacity-gate.md)
 - [Formal GPU queue](2026-09-11_002_formal-gpu-queue.md)

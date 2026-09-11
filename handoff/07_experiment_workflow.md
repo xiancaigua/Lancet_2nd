@@ -6,7 +6,8 @@ The current planned scientific entry point is
 [`experiments/protocols/antmaze_wsrl_lancet.md`](../experiments/protocols/antmaze_wsrl_lancet.md).
 It covers WSRL, capacity-matched Raw and Centered residual ablations, and
 current Lancet on `antmaze-medium-play-v2`. Current-method tiny smoke and the
-paired seed-0 20k debug pilot passed; no formal run has started.
+paired seed-0 20k debug pilot passed. The five formal shared-initializer
+archives are now running or queued; formal online branches have not started.
 
 [`antmaze_wsrl_lancet_v1.md`](../experiments/protocols/antmaze_wsrl_lancet_v1.md)
 is retained only as the never-executed Lancet V1 shared-scalar protocol.
@@ -100,8 +101,13 @@ The required order is:
 2. archived tiny real-data shared-fork smoke (done);
 3. archived seed-0 20k shared initializer and paired online pilot (done);
 4. evidence-based checkpoint/scalar/paired-AUC analysis (done);
-5. accept the frozen implementation review and push the clean formal commit;
-6. recheck formal roots and explicitly authorize the five archived 1M shared
-   offline initializers before any online formal branch (pending).
+5. accept the frozen implementation review and push the clean formal commit (done);
+6. run and validate five archived 1M shared offline initializers (running/queued);
+7. resolve the WSRL TensorBoard versus Lancet WandB logging-backend mismatch,
+   then verify shared-fork equality before any online formal branch.
+
+The initializer's configured `utd=4` does not invoke online high-UTD grouping:
+the offline runner deliberately calls one gradient step, which is handled as
+one full-batch remainder update by `SACCore.train()`.
 
 Do not run the Lancet V1 pilot as a substitute for current Lancet validation.

@@ -40,6 +40,20 @@ def _trapezoid_mean(points: list[tuple[int, float]]) -> float:
     return integral / (points[-1][0] - points[0][0])
 
 
+def _window_auc_mean(curve: dict[int, float], start: int, horizon: int) -> float:
+    """Return the normalized trapezoidal AUC on one fixed coordinate window."""
+    end = start + horizon
+    if horizon <= 0:
+        raise ValueError("AUC horizon must be positive")
+    if start < min(curve) or end > max(curve):
+        raise ValueError("AUC window is outside the observed curve")
+    steps = [start]
+    steps.extend(step for step in sorted(curve) if start < step < end)
+    steps.append(end)
+    points = [(step, _interpolate(curve, step)) for step in steps]
+    return _trapezoid_mean(points)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--baseline-run", required=True, type=Path)
@@ -98,6 +112,7 @@ def main() -> int:
         "observed_adaptation_horizon": observed_horizon,
         "formal_primary_horizon": args.formal_primary_horizon,
         "formal_primary_complete": observed_horizon >= args.formal_primary_horizon,
+        "primary_adaptation_auc": None,
         "observed_auc_mean": {
             "baseline": _trapezoid_mean(baseline_points),
             "candidate": _trapezoid_mean(candidate_points),
@@ -112,6 +127,20 @@ def main() -> int:
         result["observed_auc_mean"]["candidate"]
         - result["observed_auc_mean"]["baseline"]
     )
+    if result["formal_primary_complete"]:
+        baseline_primary = _window_auc_mean(
+            baseline_curve, adaptation_start, args.formal_primary_horizon
+        )
+        candidate_primary = _window_auc_mean(
+            candidate_curve, adaptation_start, args.formal_primary_horizon
+        )
+        result["primary_adaptation_auc"] = {
+            "adaptation_start": 0,
+            "adaptation_end": args.formal_primary_horizon,
+            "baseline": baseline_primary,
+            "candidate": candidate_primary,
+            "paired_difference": candidate_primary - baseline_primary,
+        }
 
     output_dir = args.candidate_run / "metrics"
     json_path = output_dir / "paired_comparison.json"
@@ -124,6 +153,16 @@ def main() -> int:
         f"{row['baseline']:.6g} | {row['candidate']:.6g} |"
         for row in rows
     )
+    primary = result["primary_adaptation_auc"]
+    primary_line = (
+        "- Primary Adaptation AUC: not computed; the fixed horizon is incomplete."
+        if primary is None
+        else (
+            f"- Primary Adaptation AUC 0–{args.formal_primary_horizon} "
+            f"(baseline / candidate / difference): `{primary['baseline']:.6g}` / "
+            f"`{primary['candidate']:.6g}` / `{primary['paired_difference']:.6g}`"
+        )
+    )
     markdown = (
         f"""# Paired Debug Comparison
 
@@ -135,7 +174,8 @@ This is engineering evidence, not a paper result.
 - Common final global / online step: `{final_step}` / `{final_step - online_start}`
 - Observed adaptation horizon: `{observed_horizon}`
 - Formal 0–{args.formal_primary_horizon} AUC complete: `{result["formal_primary_complete"]}`
-- Observed mean AUC (baseline / candidate / difference): """
+{primary_line}
+- Full observed adaptation AUC (diagnostic; baseline / candidate / difference): """
         f"`{result['observed_auc_mean']['baseline']:.6g}` / "
         f"`{result['observed_auc_mean']['candidate']:.6g}` / "
         f"`{result['observed_auc_mean']['paired_difference']:.6g}`\n\n"
