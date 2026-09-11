@@ -1,8 +1,8 @@
 # Lancet Current Agent State
 
-Last updated: 2026-09-11 01:47 CST
+Last updated: 2026-09-11 10:03 CST
 Branch: `main`
-Commit: formal training identity `62817637beffcbe8b1315d3c0daf03f1fc5fd9a0`
+Commit: this credentials-preparation commit; formal training identity remains `62817637beffcbe8b1315d3c0daf03f1fc5fd9a0`
 
 ## Current objective
 
@@ -63,8 +63,9 @@ active at lambda=1 for 50k adaptation steps, then update/correction are off.
 - Formal initializer archives for seeds 0–4 were created from clean, pushed
   commit `6281763`. Seeds 0/1 are training on physical GPUs 2/4; seeds 2/3/4
   are safely queued under per-GPU locks.
-- At the first health check, seeds 0/1 had passed update 9,000 with finite
-  logged losses/Q values and no NaN/Inf/OOM/traceback signal.
+- At the 2026-09-11 10:03 CST health check, seeds 0/1 were at approximately
+  377k/287k with current logs, finite reported losses/Q values, periodic
+  checkpoints, and no NaN/Inf/OOM/traceback signal in the checked log tail.
 - Formal online branches have not started and may start only after all five
   initializers pass finite-state, hash, and reload validation.
 
@@ -87,6 +88,12 @@ active at lambda=1 for 50k adaptation steps, then update/correction are off.
 - Formal requires a clean pushed frozen commit and all runtime gates.
 - Frozen hashes: dataset `c9fec1c1...7e5b`, source initializer config
   `5af6bf32...4233`, protocol `d17fb7e4...051d`.
+- Resolved WSRL/Lancet base training values match, but logging does not:
+  WSRL is TensorBoard and Lancet is WandB. Resolve this before online formal.
+- Paired analysis now computes Primary Adaptation AUC on the exact fixed 0–50k
+  window and reports longer observed AUC only as a diagnostic.
+- Local email credentials can be filled in ignored
+  `configs/local/lancet_email.env`; no sender or lifecycle integration exists.
 - Do not modify training code/config during these runs. Preserve and invalidate
   archives rather than overwriting if a real bug is found.
 

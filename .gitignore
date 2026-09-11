@@ -51,4 +51,7 @@ pretrained/*
 # 默认忽略模型权重文件
 *.pt
 
+# Machine-local Lancet notification credentials. Keep the example tracked.
+configs/local/lancet_email.env
+
 *.html
