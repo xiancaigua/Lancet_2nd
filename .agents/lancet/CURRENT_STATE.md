@@ -1,6 +1,6 @@
 # Lancet Current Agent State
 
-Last updated: 2026-09-11 17:37 CST  
+Last updated: 2026-09-11 18:04 CST  
 Branch: `main`
 Commit: current infrastructure HEAD; formal training identity remains `62817637beffcbe8b1315d3c0daf03f1fc5fd9a0`
 
@@ -64,7 +64,8 @@ active at lambda=1 for 50k adaptation steps, then update/correction are off.
   Seed 0 continues on GPU 2; seeds 2/3 continue on GPUs 3/5. Seed 1 was
   externally stopped on reserved GPU 4 at update 487335. A mistakenly assigned
   seed 4 run was stopped at 17:31 before its first checkpoint. Both failed
-  archives are preserved and will be replaced by new full-run archives.
+  archives are preserved. Fresh full-run replacements are queued at
+  `seed_1/20260911_175532` and `seed_4/20260911_175542`; neither owns a GPU.
 - At the 2026-09-11 12:03 CST health check, seeds 0/1 were at approximately
   479k/348k with current logs, finite reported losses/Q values, periodic
   checkpoints, and no NaN/Inf/OOM/traceback signal in the checked log tail.
@@ -99,19 +100,19 @@ active at lambda=1 for 50k adaptation steps, then update/correction are off.
   SMTP was tested; lifecycle notifications are state-transition-only and their
   failures cannot fail or relabel a training run.
 - `scripts/experiments/run_training.py` is the single queue/watch entry point;
-  tmux `lancet_formal_lifecycle` is active with PID 4143416 and infrastructure
-  commit `8df369138640c076aeef9293cd3736e86be8f787`.
+  tmux `lancet_formal_lifecycle` is active with PID 66688. The exact pushed
+  infrastructure commit is recorded in `formal_pipeline.json`.
   It uses an approximately 5h normal cycle, atomic state/progress files,
   stable capacity sampling, one formal job per GPU, and attach mode for seed
-  0/1. It does not import the algorithm or add training/evaluation work.
+  seed 0. It does not import the algorithm or add training/evaluation work.
 - Physical GPU 4 belongs to another user and is hard-excluded from the dynamic
   scheduler until that user explicitly releases it.
 - Initializer completion directly compares the WSRL and Lancet forked policy,
   base/target critics, alpha, base optimizer states, counters, exact-zero
   residual, and `Q_use==Q_base` on CPU before online archive preparation.
-- Its first stable resource pass found no safe new GPU, so seeds 2/3/4 remain
-  queued with no worker, training PID, or CUDA context. Their QUEUED email
-  transitions were each accepted once.
+- Seeds 2/3 are running on GPUs 3/5. Replacement seeds 1/4 remain queued with
+  no worker, training PID, or CUDA context because the stable resource pass
+  found no safe unused non-4 GPU.
 - Do not modify training code/config during these runs. Preserve and invalidate
   archives rather than overwriting if a real bug is found.
 
@@ -119,7 +120,7 @@ active at lambda=1 for 50k adaptation steps, then update/correction are off.
 
 1. Keep the detached lifecycle controller alive; inspect it with
    `python3 scripts/experiments/run_training.py status`.
-2. Let seed 2/3/4 use any GPU that passes the measured dynamic gate.
+2. Let replacement seed 1/4 use any non-4 GPU that passes the dynamic gate.
 3. Validate each `offline_final.pt`; a failed validation must block online.
 4. Permit seed-wise paired online launch only after shared lineage/reload checks.
 

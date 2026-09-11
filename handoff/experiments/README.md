@@ -38,6 +38,8 @@ authoritative record. This page is a human-readable index only.
 | antmaze-medium-play-v2 | wsrl-initializer | 2 | running on GPU 3 | initializer validation pending | `/home/zhaozihan/Lancet/data/runs/formal/antmaze-medium-play-v2/wsrl-initializer/seed_2/20260911_013834` |
 | antmaze-medium-play-v2 | wsrl-initializer | 3 | running on GPU 5 | initializer validation pending | `/home/zhaozihan/Lancet/data/runs/formal/antmaze-medium-play-v2/wsrl-initializer/seed_3/20260911_013834` |
 | antmaze-medium-play-v2 | wsrl-initializer | 4 | failed before first checkpoint; stopped to release GPU 4; replacement pending | not collected | `/home/zhaozihan/Lancet/data/runs/formal/antmaze-medium-play-v2/wsrl-initializer/seed_4/20260911_013834` |
+| antmaze-medium-play-v2 | wsrl-initializer | 1 | replacement queued; GPU 4 excluded | not collected | `/home/zhaozihan/Lancet/data/runs/formal/antmaze-medium-play-v2/wsrl-initializer/seed_1/20260911_175532` |
+| antmaze-medium-play-v2 | wsrl-initializer | 4 | replacement queued; GPU 4 excluded | not collected | `/home/zhaozihan/Lancet/data/runs/formal/antmaze-medium-play-v2/wsrl-initializer/seed_4/20260911_175542` |
 <!-- formal-rows -->
 
 Formal initializer training started on 2026-09-11 from frozen commit `6281763`.

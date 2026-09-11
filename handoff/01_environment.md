@@ -12,6 +12,10 @@
 | Docker | 29.3.1 |
 | Host tmux | 3.4 |
 
+Physical GPU 4 is temporarily reserved by another user and is hard-excluded
+from Lancet's dynamic scheduler. Do not use it until the user explicitly lifts
+this restriction; no Lancet process is currently running there.
+
 ## Runtime
 
 | Item | Actual state |

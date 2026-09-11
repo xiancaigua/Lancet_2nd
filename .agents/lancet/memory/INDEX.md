@@ -8,6 +8,7 @@ Current state: [`../CURRENT_STATE.md`](../CURRENT_STATE.md)
 
 | Seq | Date | Topic | Status | File |
 |---|---|---|---|---|
+| 015 | 2026-09-11 | GPU 4 replacement queue | completed | [memory](2026-09-11_015_gpu4-replacement-queue.md) |
 | 014 | 2026-09-11 | GPU 4 exclusion and formal recovery | completed | [memory](2026-09-11_014_gpu4-exclusion-and-recovery.md) |
 | 013 | 2026-09-11 | wsrl-initializer formal | blocked | [memory](2026-09-11_013_wsrl-initializer-antmaze-medium-play-v2-formal.md) |
 | 012 | 2026-09-11 | wsrl-initializer formal | blocked | [memory](2026-09-11_012_wsrl-initializer-antmaze-medium-play-v2-formal.md) |
@@ -75,6 +76,7 @@ was not independently recorded.
 
 ### Dataset / experiments
 
+- [GPU 4 replacement queue](2026-09-11_015_gpu4-replacement-queue.md)
 - [GPU 4 exclusion and formal recovery](2026-09-11_014_gpu4-exclusion-and-recovery.md)
 - [wsrl-initializer formal](2026-09-11_013_wsrl-initializer-antmaze-medium-play-v2-formal.md)
 
