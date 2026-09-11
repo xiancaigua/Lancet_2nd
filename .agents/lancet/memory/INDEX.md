@@ -8,6 +8,9 @@ Current state: [`../CURRENT_STATE.md`](../CURRENT_STATE.md)
 
 | Seq | Date | Topic | Status | File |
 |---|---|---|---|---|
+| 014 | 2026-09-11 | GPU 4 exclusion and formal recovery | completed | [memory](2026-09-11_014_gpu4-exclusion-and-recovery.md) |
+| 013 | 2026-09-11 | wsrl-initializer formal | blocked | [memory](2026-09-11_013_wsrl-initializer-antmaze-medium-play-v2-formal.md) |
+| 012 | 2026-09-11 | wsrl-initializer formal | blocked | [memory](2026-09-11_012_wsrl-initializer-antmaze-medium-play-v2-formal.md) |
 | 011 | 2026-09-11 | Shared-fork runtime gate | completed | [memory](2026-09-11_011_shared-fork-runtime-gate.md) |
 | 010 | 2026-09-11 | Dynamic formal queue activated | completed | [memory](2026-09-11_010_dynamic-queue-activated.md) |
 | 009 | 2026-09-11 | Dynamic formal lifecycle implementation | completed | [memory](2026-09-11_009_dynamic-lifecycle-implementation.md) |
@@ -52,6 +55,7 @@ was not independently recorded.
 
 ### Environment / Docker
 
+- [GPU 4 exclusion and formal recovery](2026-09-11_014_gpu4-exclusion-and-recovery.md)
 - [Dynamic formal lifecycle implementation](2026-09-11_009_dynamic-lifecycle-implementation.md)
 - [SMTP test](2026-09-11_007_smtp-test.md)
 - [Email credentials template](2026-09-11_006_email-credentials-template.md)
@@ -70,6 +74,11 @@ was not independently recorded.
 - [Lancet residual scaffold](2026-09-07_004_lancet-residual-scaffold.md)
 
 ### Dataset / experiments
+
+- [GPU 4 exclusion and formal recovery](2026-09-11_014_gpu4-exclusion-and-recovery.md)
+- [wsrl-initializer formal](2026-09-11_013_wsrl-initializer-antmaze-medium-play-v2-formal.md)
+
+- [wsrl-initializer formal](2026-09-11_012_wsrl-initializer-antmaze-medium-play-v2-formal.md)
 
 - [Dynamic formal queue activated](2026-09-11_010_dynamic-queue-activated.md)
 - [Fixed-GPU waiters retired](2026-09-11_008_fixed-waiters-retired.md)

@@ -34,10 +34,10 @@ authoritative record. This page is a human-readable index only.
 | Env | Algo | Seed | Status | Main metric | Output |
 |---|---|---|---|---|---|
 | antmaze-medium-play-v2 | wsrl-initializer | 0 | running on GPU 2 | initializer validation pending | `/home/zhaozihan/Lancet/data/runs/formal/antmaze-medium-play-v2/wsrl-initializer/seed_0/20260911_013042` |
-| antmaze-medium-play-v2 | wsrl-initializer | 1 | running on GPU 4 | initializer validation pending | `/home/zhaozihan/Lancet/data/runs/formal/antmaze-medium-play-v2/wsrl-initializer/seed_1/20260911_013042` |
-| antmaze-medium-play-v2 | wsrl-initializer | 2 | queued for GPU 2 | not collected | `/home/zhaozihan/Lancet/data/runs/formal/antmaze-medium-play-v2/wsrl-initializer/seed_2/20260911_013834` |
-| antmaze-medium-play-v2 | wsrl-initializer | 3 | queued for GPU 4 | not collected | `/home/zhaozihan/Lancet/data/runs/formal/antmaze-medium-play-v2/wsrl-initializer/seed_3/20260911_013834` |
-| antmaze-medium-play-v2 | wsrl-initializer | 4 | queued for GPU 2 | not collected | `/home/zhaozihan/Lancet/data/runs/formal/antmaze-medium-play-v2/wsrl-initializer/seed_4/20260911_013834` |
+| antmaze-medium-play-v2 | wsrl-initializer | 1 | failed at 487335; GPU 4 external interruption; replacement pending | not collected | `/home/zhaozihan/Lancet/data/runs/formal/antmaze-medium-play-v2/wsrl-initializer/seed_1/20260911_013042` |
+| antmaze-medium-play-v2 | wsrl-initializer | 2 | running on GPU 3 | initializer validation pending | `/home/zhaozihan/Lancet/data/runs/formal/antmaze-medium-play-v2/wsrl-initializer/seed_2/20260911_013834` |
+| antmaze-medium-play-v2 | wsrl-initializer | 3 | running on GPU 5 | initializer validation pending | `/home/zhaozihan/Lancet/data/runs/formal/antmaze-medium-play-v2/wsrl-initializer/seed_3/20260911_013834` |
+| antmaze-medium-play-v2 | wsrl-initializer | 4 | failed before first checkpoint; stopped to release GPU 4; replacement pending | not collected | `/home/zhaozihan/Lancet/data/runs/formal/antmaze-medium-play-v2/wsrl-initializer/seed_4/20260911_013834` |
 <!-- formal-rows -->
 
 Formal initializer training started on 2026-09-11 from frozen commit `6281763`.

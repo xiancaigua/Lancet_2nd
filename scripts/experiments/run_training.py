@@ -39,6 +39,7 @@ DEFAULT_MAX_UTIL = 20
 DEFAULT_MAX_FOREIGN_MIB = 2_048
 DEFAULT_SETTLE_SAMPLES = 3
 DEFAULT_SETTLE_SECONDS = 30
+DEFAULT_EXCLUDED_GPU_IDS: tuple[int, ...] = ()
 FORMAL_PROTOCOL = REPO / "experiments/protocols/antmaze_wsrl_lancet.md"
 DATASET = DATA / "datasets/d4rl/Ant_maze_big-maze_noisy_multistart_True_multigoal_False_sparse_fixed.hdf5"
 
@@ -183,6 +184,7 @@ def _stable_candidates(settings: dict) -> tuple[list[int], list[dict]]:
             time.sleep(settings["settle_seconds"])
     candidate_ids: list[int] = []
     audit: list[dict] = []
+    excluded_gpu_ids = {int(gpu_id) for gpu_id in settings.get("excluded_gpu_ids", [])}
     for gpu_id in range(len(samples[0])):
         rows = [sample[gpu_id] for sample in samples]
         free_min = min(row["memory_free_mib"] for row in rows)
@@ -192,6 +194,8 @@ def _stable_candidates(settings: dict) -> tuple[list[int], list[dict]]:
         has_lancet = any(item["lancet"] for item in processes)
         lock_available = _gpu_lock_available(gpu_id)
         reasons = []
+        if gpu_id in excluded_gpu_ids:
+            reasons.append("excluded_by_policy")
         if free_min < settings["required_free_mib"]:
             reasons.append("insufficient_free_memory")
         if util_max > settings["max_utilization_percent"]:
@@ -897,6 +901,7 @@ def _initialize(args) -> int:
             "settle_samples": args.settle_samples,
             "settle_seconds": args.settle_seconds,
             "max_lancet_jobs_per_gpu": 1,
+            "excluded_gpu_ids": sorted(set(args.exclude_gpu)),
         },
         "jobs": jobs,
         "batch_notifications": {},
@@ -948,6 +953,25 @@ def _status(path: Path) -> int:
     return 0
 
 
+def _exclude_gpu(path: Path, gpu_id: int, reason: str) -> int:
+    if gpu_id < 0:
+        raise SystemExit("gpu id must be non-negative")
+    with _locked_state(path) as state:
+        excluded = {int(item) for item in state["settings"].get("excluded_gpu_ids", [])}
+        excluded.add(gpu_id)
+        state["settings"]["excluded_gpu_ids"] = sorted(excluded)
+        state.setdefault("policy_events", []).append(
+            {
+                "event": "gpu_excluded",
+                "gpu_id": gpu_id,
+                "reason": reason,
+                "recorded_at": _now(),
+            }
+        )
+    print(f"excluded GPU {gpu_id}: {reason}")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -966,6 +990,13 @@ def main() -> int:
     init.add_argument("--max-foreign-memory-mib", type=int, default=DEFAULT_MAX_FOREIGN_MIB)
     init.add_argument("--settle-samples", type=int, default=DEFAULT_SETTLE_SAMPLES)
     init.add_argument("--settle-seconds", type=int, default=DEFAULT_SETTLE_SECONDS)
+    init.add_argument(
+        "--exclude-gpu",
+        action="append",
+        default=list(DEFAULT_EXCLUDED_GPU_IDS),
+        type=int,
+        help="GPU id that the dynamic scheduler must never select (repeatable).",
+    )
     run = sub.add_parser("run")
     run.add_argument("--state-file", type=Path, default=DEFAULT_STATE)
     run.add_argument("--once", action="store_true")
@@ -975,6 +1006,10 @@ def main() -> int:
     worker.add_argument("--gpu-id", required=True, type=int)
     status = sub.add_parser("status")
     status.add_argument("--state-file", type=Path, default=DEFAULT_STATE)
+    exclude_gpu = sub.add_parser("exclude-gpu")
+    exclude_gpu.add_argument("--state-file", type=Path, default=DEFAULT_STATE)
+    exclude_gpu.add_argument("--gpu-id", type=int, required=True)
+    exclude_gpu.add_argument("--reason", required=True)
     add = sub.add_parser("add")
     add.add_argument("--state-file", type=Path, default=DEFAULT_STATE)
     add.add_argument("--archive", type=Path, required=True)
@@ -988,6 +1023,8 @@ def main() -> int:
         return _worker(args.state_file, args.job_id, args.gpu_id)
     if args.command == "add":
         return _add(args)
+    if args.command == "exclude-gpu":
+        return _exclude_gpu(args.state_file, args.gpu_id, args.reason)
     return _status(args.state_file)
 
 

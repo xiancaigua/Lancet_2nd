@@ -1,8 +1,8 @@
 # Lancet Current Agent State
 
-Last updated: 2026-09-11 12:46 CST
+Last updated: 2026-09-11 17:37 CST  
 Branch: `main`
-Commit: this credentials-preparation commit; formal training identity remains `62817637beffcbe8b1315d3c0daf03f1fc5fd9a0`
+Commit: current infrastructure HEAD; formal training identity remains `62817637beffcbe8b1315d3c0daf03f1fc5fd9a0`
 
 ## Current objective
 
@@ -60,10 +60,11 @@ active at lambda=1 for 50k adaptation steps, then update/correction are off.
   at 25,056 and completed 60,160 residual updates; logged Delta/Q ratio stayed
   below `7.13e-4`. Both short debug curves were identically zero, so no
   performance claim is supported.
-- Formal initializer archives for seeds 0–4 were created from clean, pushed
-  commit `6281763`. Seeds 0/1 continue on physical GPUs 2/4. The old fixed-GPU
-  waiters for seeds 2/3/4 were stopped before any training/update and their
-  archives are preserved for the dynamic any-GPU queue.
+- Formal initializer archives were created from clean, pushed commit `6281763`.
+  Seed 0 continues on GPU 2; seeds 2/3 continue on GPUs 3/5. Seed 1 was
+  externally stopped on reserved GPU 4 at update 487335. A mistakenly assigned
+  seed 4 run was stopped at 17:31 before its first checkpoint. Both failed
+  archives are preserved and will be replaced by new full-run archives.
 - At the 2026-09-11 12:03 CST health check, seeds 0/1 were at approximately
   479k/348k with current logs, finite reported losses/Q values, periodic
   checkpoints, and no NaN/Inf/OOM/traceback signal in the checked log tail.
@@ -98,11 +99,13 @@ active at lambda=1 for 50k adaptation steps, then update/correction are off.
   SMTP was tested; lifecycle notifications are state-transition-only and their
   failures cannot fail or relabel a training run.
 - `scripts/experiments/run_training.py` is the single queue/watch entry point;
-  tmux `lancet_formal_lifecycle` is active with PID 3349706 and infrastructure
+  tmux `lancet_formal_lifecycle` is active with PID 4143416 and infrastructure
   commit `8df369138640c076aeef9293cd3736e86be8f787`.
   It uses an approximately 5h normal cycle, atomic state/progress files,
   stable capacity sampling, one formal job per GPU, and attach mode for seed
   0/1. It does not import the algorithm or add training/evaluation work.
+- Physical GPU 4 belongs to another user and is hard-excluded from the dynamic
+  scheduler until that user explicitly releases it.
 - Initializer completion directly compares the WSRL and Lancet forked policy,
   base/target critics, alpha, base optimizer states, counters, exact-zero
   residual, and `Q_use==Q_base` on CPU before online archive preparation.

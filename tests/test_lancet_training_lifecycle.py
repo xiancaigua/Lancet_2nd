@@ -64,6 +64,26 @@ def test_dynamic_gate_requires_stable_capacity_and_rejects_foreign_load(monkeypa
     assert "foreign_memory" in audit[1]["reasons"]
 
 
+def test_dynamic_gate_honors_policy_exclusion(monkeypatch):
+    samples = [[_gpu(0, free=40_000, util=0), _gpu(1, free=40_000, util=0)]]
+    monkeypatch.setattr(lifecycle, "_gpu_snapshot", lambda: samples.pop(0))
+    monkeypatch.setattr(lifecycle, "_gpu_lock_available", lambda _gpu_id: True)
+    settings = {
+        "settle_samples": 1,
+        "settle_seconds": 0,
+        "required_free_mib": 13_756,
+        "max_utilization_percent": 20,
+        "max_foreign_memory_mib": 2_048,
+        "excluded_gpu_ids": [1],
+    }
+
+    candidates, audit = lifecycle._stable_candidates(settings)
+
+    assert candidates == [0]
+    assert audit[1]["usable"] is False
+    assert "excluded_by_policy" in audit[1]["reasons"]
+
+
 def test_progress_reads_only_log_tail_and_reports_rate(tmp_path):
     archive = tmp_path / "run"
     archive.mkdir()
@@ -104,3 +124,15 @@ def test_notification_transition_is_idempotent(tmp_path, monkeypatch):
     assert calls == [("subject", "body")]
     state = json.loads(state_path.read_text())
     assert state["jobs"][0]["notifications"]["queued"]["status"] == "sent"
+
+
+def test_exclude_gpu_persists_policy_and_audit_event(tmp_path):
+    state_path = tmp_path / "state.json"
+    lifecycle._atomic_json(state_path, {"settings": {}, "jobs": []})
+
+    lifecycle._exclude_gpu(state_path, 4, "reserved by another user")
+    lifecycle._exclude_gpu(state_path, 4, "reserved by another user")
+
+    state = json.loads(state_path.read_text())
+    assert state["settings"]["excluded_gpu_ids"] == [4]
+    assert state["policy_events"][-1]["gpu_id"] == 4
