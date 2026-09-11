@@ -20,6 +20,7 @@ import pwd
 import re
 import shlex
 import signal
+import statistics
 import subprocess
 import sys
 import time
@@ -335,7 +336,7 @@ def _job_from_archive(archive: Path, *, status: str, mode: str, pid: int | None 
         "gpu_id": metadata.get("gpu_id") if mode == "attach" else None,
         "started_at": metadata.get("start_time"),
         "completed_at": None,
-        "validation_status": "pending" if metadata["method_label"] == "wsrl-initializer" else "not_required",
+        "validation_status": "pending",
         "online_pair_prepared": False,
         "notifications": {},
     }
@@ -409,14 +410,14 @@ def _worker_impl(state_path: Path, job_id: str, gpu_id: int) -> int:
     with _locked_state(state_path) as state:
         job = next(item for item in state["jobs"] if item["job_id"] == job_id)
         job.update(status=lifecycle_status, completed_at=metadata["end_time"], return_code=returncode)
-    event = "completed" if returncode == 0 else "failed"
-    _notification(
-        state_path,
-        job_id,
-        event,
-        f"[Lancet] {event.upper()} - {job['method']} seed {job['seed']}",
-        f"method: {job['method']}\nseed: {job['seed']}\nstatus: {lifecycle_status}\nGPU: {gpu_id}\nreturn code: {returncode}\narchive: {archive}\n",
-    )
+    if returncode != 0:
+        _notification(
+            state_path,
+            job_id,
+            "failed",
+            f"[Lancet] FAILED - {job['method']} seed {job['seed']}",
+            f"method: {job['method']}\nseed: {job['seed']}\nstatus: failed\nGPU: {gpu_id}\nreturn code: {returncode}\narchive: {archive}\n",
+        )
     return returncode
 
 
@@ -505,6 +506,94 @@ def _validate_initializer(state_path: Path, job_id: str) -> bool:
             state_path, job_id, "blocked", f"[Lancet] BLOCKED - initializer seed {job['seed']}",
             f"Initializer validation failed.\nseed: {job['seed']}\narchive: {archive}\nvalidation: {validation_dir / 'initializer_validation.json'}\n",
         )
+    else:
+        _notification(
+            state_path,
+            job_id,
+            "completed",
+            f"[Lancet] COMPLETED - initializer seed {job['seed']}",
+            f"Initializer training and validation passed.\nseed: {job['seed']}\ncheckpoint: {checkpoint}\ncheckpoint sha256: {result['checkpoint_sha256']}\narchive: {archive}\n",
+        )
+    return passed
+
+
+def _validate_online(state_path: Path, job_id: str) -> bool:
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    job = next(item for item in state["jobs"] if item["job_id"] == job_id)
+    archive = Path(job["archive"])
+    checkpoint = Path(job["checkpoint_dir"]) / "final.pt"
+    validation_dir = archive / "validation"
+    validation_dir.mkdir(exist_ok=True)
+    result = {"started_at": _now(), "checkpoint": str(checkpoint), "checks": {}}
+    passed = checkpoint.is_file()
+    if checkpoint.is_file():
+        container_checkpoint = archive_run._container_path(checkpoint)
+        container_archive = archive_run._container_path(archive)
+        commands = (
+            (
+                "finite_checkpoint",
+                ["./dev", "d4rl", "python", "scripts/experiments/validate_checkpoint_finite.py", "--checkpoint", container_checkpoint],
+            ),
+            (
+                "agent_reload_dry_run",
+                [
+                    "./dev", "d4rl", "python", "examples/train_off2on.py", job["algorithm"],
+                    "--config", f"{container_archive}/config.yaml",
+                    "--log_dir", f"{container_archive}/validation/reload",
+                    "--checkpoint_dir", f"{container_archive}/validation/reload-checkpoints",
+                    "--seed", str(job["seed"]), "--load_checkpoint", container_checkpoint, "--dry-run",
+                ],
+            ),
+        )
+        for name, command in commands:
+            completed = subprocess.run(command, cwd=REPO, text=True, capture_output=True, check=False)
+            result["checks"][name] = {
+                "return_code": completed.returncode,
+                "stdout_tail": completed.stdout[-4000:],
+                "stderr_tail": completed.stderr[-4000:],
+            }
+            passed = passed and completed.returncode == 0
+        if passed:
+            analyzed = subprocess.run(
+                [
+                    "./dev", "d4rl", "python", "scripts/experiments/analyze_run.py",
+                    "--run-dir", container_archive, "--checkpoint", container_checkpoint,
+                    "--reload-verified",
+                ],
+                cwd=REPO,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            result["checks"]["archive_analysis"] = {
+                "return_code": analyzed.returncode,
+                "stdout_tail": analyzed.stdout[-4000:],
+                "stderr_tail": analyzed.stderr[-4000:],
+            }
+            passed = analyzed.returncode == 0
+        result["checkpoint_sha256"] = _sha256(checkpoint)
+    else:
+        result["error"] = "final.pt missing"
+    result.update(status="passed" if passed else "failed", finished_at=_now())
+    output = validation_dir / "online_validation.json"
+    _atomic_json(output, result)
+    with _locked_state(state_path) as current:
+        target = next(item for item in current["jobs"] if item["job_id"] == job_id)
+        target["validation_status"] = result["status"]
+        target["validation_path"] = str(output)
+        target["checkpoint_sha256"] = result.get("checkpoint_sha256")
+        if not passed:
+            target["status"] = "blocked"
+    if passed:
+        _notification(
+            state_path, job_id, "completed", f"[Lancet] COMPLETED - {job['method']} seed {job['seed']}",
+            f"Training, final checkpoint reload, and archive analysis passed.\nmethod: {job['method']}\nseed: {job['seed']}\narchive: {archive}\nanalysis: {archive / 'analysis.md'}\n",
+        )
+    else:
+        _notification(
+            state_path, job_id, "blocked", f"[Lancet] BLOCKED - {job['method']} seed {job['seed']}",
+            f"Training exited zero but completion validation failed.\nmethod: {job['method']}\nseed: {job['seed']}\nvalidation: {output}\narchive: {archive}\n",
+        )
     return passed
 
 
@@ -582,11 +671,12 @@ def _refresh(state_path: Path) -> None:
                 with _locked_state(state_path) as current:
                     target = next(item for item in current["jobs"] if item["job_id"] == job["job_id"])
                     target.update(status=status, completed_at=metadata.get("end_time"), return_code=metadata.get("return_code"))
-                _notification(
-                    state_path, job["job_id"], status,
-                    f"[Lancet] {status.upper()} - {job['method']} seed {job['seed']}",
-                    f"method: {job['method']}\nseed: {job['seed']}\nstatus: {status}\narchive: {archive}\n",
-                )
+                if status == "failed":
+                    _notification(
+                        state_path, job["job_id"], "failed",
+                        f"[Lancet] FAILED - {job['method']} seed {job['seed']}",
+                        f"method: {job['method']}\nseed: {job['seed']}\nstatus: failed\narchive: {archive}\n",
+                    )
             elif not _pid_alive(job.get("process_pid")):
                 with _locked_state(state_path) as current:
                     target = next(item for item in current["jobs"] if item["job_id"] == job["job_id"])
@@ -617,6 +707,13 @@ def _postprocess(state_path: Path) -> None:
                     f"[Lancet] BLOCKED - online fork seed {job['seed']}",
                     f"Online pair preparation failed.\nseed: {job['seed']}\nerror: {type(exc).__name__}: {exc}\narchive: {job['archive']}\n",
                 )
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    online_pending = [
+        job for job in state["jobs"]
+        if job["stage"] == "online" and job["status"] == "completed" and job["validation_status"] == "pending"
+    ]
+    for job in online_pending:
+        _validate_online(state_path, job["job_id"])
 
 
 def _launch_queued(state_path: Path) -> None:
@@ -657,6 +754,71 @@ def _batch_notifications(state_path: Path) -> None:
             lines = [f"seed {job['seed']}: {job.get('checkpoint_sha256')} {job['archive']}" for job in sorted(initializers, key=lambda item: item["seed"])]
             try:
                 result = notify_email.send_notification("[Lancet] Formal Initializers Complete", "All five formal initializers validated.\n\n" + "\n".join(lines) + "\n")
+            except Exception as exc:  # noqa: BLE001 - batch email is best effort.
+                result = {"status": "failed", "error": f"{type(exc).__name__}: {exc}", "finished_at": _now()}
+            with _locked_state(state_path) as current:
+                current["batch_notifications"][marker] = result
+
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    main_jobs = [
+        job for job in state["jobs"]
+        if job["stage"] == "online" and job["method"] in {"wsrl", "lancet"}
+    ]
+    if len(main_jobs) == 10 and all(
+        job["status"] == "completed" and job["validation_status"] == "passed"
+        for job in main_jobs
+    ):
+        marker = "formal_main_comparison_complete"
+        with _locked_state(state_path) as current:
+            already = marker in current.setdefault("batch_notifications", {})
+            if not already:
+                current["batch_notifications"][marker] = {"status": "attempting", "attempted_at": _now()}
+        if not already:
+            pairs = []
+            for seed in range(5):
+                baseline = next(job for job in main_jobs if job["seed"] == seed and job["method"] == "wsrl")
+                candidate = next(job for job in main_jobs if job["seed"] == seed and job["method"] == "lancet")
+                output = Path(candidate["archive"]) / "metrics/paired_comparison.json"
+                if not output.is_file():
+                    subprocess.run(
+                        [
+                            "./dev", "d4rl", "python", "scripts/experiments/compare_runs.py",
+                            "--baseline-run", archive_run._container_path(Path(baseline["archive"])),
+                            "--candidate-run", archive_run._container_path(Path(candidate["archive"])),
+                        ],
+                        cwd=REPO,
+                        text=True,
+                        capture_output=True,
+                        check=True,
+                    )
+                comparison = json.loads(output.read_text(encoding="utf-8"))
+                primary = comparison.get("primary_adaptation_auc")
+                if not primary:
+                    raise RuntimeError(f"seed {seed} has no complete 0-50k primary AUC")
+                pairs.append({"seed": seed, **primary})
+            differences = [row["paired_difference"] for row in pairs]
+            mean = statistics.mean(differences)
+            sample_sd = statistics.stdev(differences)
+            half_width = 2.7764451051977987 * sample_sd / len(differences) ** 0.5
+            summary = {
+                "metric": "Adaptation AUC 0-50k",
+                "pairs": pairs,
+                "paired_difference_mean": mean,
+                "paired_difference_sample_sd": sample_sd,
+                "paired_difference_95_t_ci": [mean - half_width, mean + half_width],
+                "created_at": _now(),
+            }
+            summary_path = state_path.parent / "formal_main_summary.json"
+            _atomic_json(summary_path, summary)
+            body = (
+                "All five paired WSRL/Lancet formal seeds completed and validated.\n\n"
+                f"Adaptation AUC 0-50k paired difference mean: {mean:.6g}\n"
+                f"sample SD: {sample_sd:.6g}\n"
+                f"95% t-CI: [{mean - half_width:.6g}, {mean + half_width:.6g}]\n"
+                f"analysis: {summary_path}\n"
+            )
+            try:
+                result = notify_email.send_notification("[Lancet] Formal Main Comparison Complete", body)
             except Exception as exc:  # noqa: BLE001 - batch email is best effort.
                 result = {"status": "failed", "error": f"{type(exc).__name__}: {exc}", "finished_at": _now()}
             with _locked_state(state_path) as current:
@@ -746,6 +908,25 @@ def _initialize(args) -> int:
     return 0
 
 
+def _add(args) -> int:
+    archive = args.archive.resolve()
+    status = "running" if args.attach_pid else "queued"
+    mode = "attach" if args.attach_pid else "managed"
+    job = _job_from_archive(archive, status=status, mode=mode, pid=args.attach_pid)
+    with _locked_state(args.state_file) as state:
+        if any(item["job_id"] == job["job_id"] for item in state["jobs"]):
+            raise SystemExit(f"job already registered: {job['job_id']}")
+        state["jobs"].append(job)
+    if status == "queued":
+        _notification(
+            args.state_file, job["job_id"], "queued",
+            f"[Lancet] QUEUED - {job['method']} seed {job['seed']}",
+            f"method: {job['method']}\nseed: {job['seed']}\narchive: {job['archive']}\nresource gate: dynamic any-GPU\n",
+        )
+    print(job["job_id"])
+    return 0
+
+
 def _status(path: Path) -> int:
     state = json.loads(path.read_text(encoding="utf-8"))
     print(json.dumps({
@@ -788,6 +969,10 @@ def main() -> int:
     worker.add_argument("--gpu-id", required=True, type=int)
     status = sub.add_parser("status")
     status.add_argument("--state-file", type=Path, default=DEFAULT_STATE)
+    add = sub.add_parser("add")
+    add.add_argument("--state-file", type=Path, default=DEFAULT_STATE)
+    add.add_argument("--archive", type=Path, required=True)
+    add.add_argument("--attach-pid", type=int)
     args = parser.parse_args()
     if args.command == "init":
         return _initialize(args)
@@ -795,6 +980,8 @@ def main() -> int:
         return _controller(args.state_file, once=args.once)
     if args.command == "worker":
         return _worker(args.state_file, args.job_id, args.gpu_id)
+    if args.command == "add":
+        return _add(args)
     return _status(args.state_file)
 
 
