@@ -20,5 +20,15 @@ training metadata, logs, Agent Memory, or Handoff.
 - `LANCET_SMTP_STARTTLS` / `LANCET_SMTP_SSL`: normally exactly one is `true`.
   A typical port-587 setup is `true/false`; port 465 is usually `false/true`.
 
-No SMTP sender or training integration exists yet. Filling this file alone
-does not send email or alter a running experiment.
+A standalone explicit-test SMTP sender exists, but no training lifecycle
+integration exists. Filling this file alone does not send email or alter a
+running experiment.
+
+An explicitly authorized one-message test can be run from the Host with:
+
+```bash
+python3 scripts/experiments/notify_email.py --test
+```
+
+The command reads the ignored file directly and never places credentials in
+command-line arguments. It is not connected to experiment lifecycle events.

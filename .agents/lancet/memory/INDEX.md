@@ -8,6 +8,7 @@ Current state: [`../CURRENT_STATE.md`](../CURRENT_STATE.md)
 
 | Seq | Date | Topic | Status | File |
 |---|---|---|---|---|
+| 007 | 2026-09-11 | SMTP test | completed | [memory](2026-09-11_007_smtp-test.md) |
 | 006 | 2026-09-11 | Email credentials template | completed | [memory](2026-09-11_006_email-credentials-template.md) |
 | 005 | 2026-09-11 | Formal state and semantics audit | completed | [memory](2026-09-11_005_formal-state-and-semantics-audit.md) |
 | 004 | 2026-09-11 | Formal initializers launched | partial | [memory](2026-09-11_004_formal-initializers-launched.md) |
@@ -47,6 +48,7 @@ was not independently recorded.
 
 ### Environment / Docker
 
+- [SMTP test](2026-09-11_007_smtp-test.md)
 - [Email credentials template](2026-09-11_006_email-credentials-template.md)
 - [2026-09-08 engineering consolidation](2026-09-08_002_engineering-consolidation.md)
 - [2026-09-08 Host tmux available](2026-09-08_001_host-tmux-available.md)

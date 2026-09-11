@@ -92,8 +92,9 @@ active at lambda=1 for 50k adaptation steps, then update/correction are off.
   WSRL is TensorBoard and Lancet is WandB. Resolve this before online formal.
 - Paired analysis now computes Primary Adaptation AUC on the exact fixed 0–50k
   window and reports longer observed AUC only as a diagnostic.
-- Local email credentials can be filled in ignored
-  `configs/local/lancet_email.env`; no sender or lifecycle integration exists.
+- Local email credentials live in ignored `configs/local/lancet_email.env`.
+  One explicit SMTP test was accepted on 2026-09-11; no experiment lifecycle
+  integration exists.
 - Do not modify training code/config during these runs. Preserve and invalidate
   archives rather than overwriting if a real bug is found.
 
