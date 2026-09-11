@@ -7,7 +7,8 @@ The current planned scientific entry point is
 It covers WSRL, capacity-matched Raw and Centered residual ablations, and
 current Lancet on `antmaze-medium-play-v2`. Current-method tiny smoke and the
 paired seed-0 20k debug pilot passed. The five formal shared-initializer
-archives are now running or queued; formal online branches have not started.
+archives are now running or held by one dynamic queue; formal online branches
+have not started.
 
 [`antmaze_wsrl_lancet_v1.md`](../experiments/protocols/antmaze_wsrl_lancet_v1.md)
 is retained only as the never-executed Lancet V1 shared-scalar protocol.
@@ -103,11 +104,27 @@ The required order is:
 4. evidence-based checkpoint/scalar/paired-AUC analysis (done);
 5. accept the frozen implementation review and push the clean formal commit (done);
 6. run and validate five archived 1M shared offline initializers (running/queued);
-7. resolve the WSRL TensorBoard versus Lancet WandB logging-backend mismatch,
-   then verify shared-fork equality before any online formal branch.
+7. after each seed validates, prepare its shared-fork WSRL/Lancet online pair
+   immediately; different seeds need not wait for all initializers.
 
 The initializer's configured `utd=4` does not invoke online high-UTD grouping:
 the offline runner deliberately calls one gradient step, which is handled as
 one full-batch remainder update by `SACCore.train()`.
+
+## Formal lifecycle controller
+
+`scripts/experiments/run_training.py` is an external wrapper around archived
+commands. Its local state is
+`/data/lancet/runs/formal/.lifecycle/formal_pipeline.json`. It attaches to
+pre-existing seed 0/1 processes, queues seed 2–4 without allocating CUDA state,
+selects any safe GPU after a stable capacity sample, writes `progress.json`,
+and treats SMTP failures as non-fatal infrastructure warnings. A completed
+initializer must pass finite checkpoint and WSRL/Lancet reload checks before
+the controller prepares that seed's online pair; failures become `blocked`.
+
+The formal algorithm identity remains commit `6281763`; scheduler/email/config
+logging changes use a separate infrastructure commit recorded in new archives.
+WSRL and Lancet online now both use TensorBoard and final checkpoint saving.
+Their resolved base training values were rechecked equal.
 
 Do not run the Lancet V1 pilot as a substitute for current Lancet validation.

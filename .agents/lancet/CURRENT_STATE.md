@@ -1,13 +1,13 @@
 # Lancet Current Agent State
 
-Last updated: 2026-09-11 10:03 CST
+Last updated: 2026-09-11 12:20 CST
 Branch: `main`
 Commit: this credentials-preparation commit; formal training identity remains `62817637beffcbe8b1315d3c0daf03f1fc5fd9a0`
 
 ## Current objective
 
-Monitor and validate the five seed-specific shared WSRL offline initializers.
-Lancet algorithm design and the formal protocol are frozen.
+Operate the five seed-specific shared WSRL offline initializers through one
+dynamic lifecycle queue. Lancet mathematics and the formal protocol are frozen.
 
 ## Repository and runtime
 
@@ -61,13 +61,15 @@ active at lambda=1 for 50k adaptation steps, then update/correction are off.
   below `7.13e-4`. Both short debug curves were identically zero, so no
   performance claim is supported.
 - Formal initializer archives for seeds 0–4 were created from clean, pushed
-  commit `6281763`. Seeds 0/1 are training on physical GPUs 2/4; seeds 2/3/4
-  are safely queued under per-GPU locks.
-- At the 2026-09-11 10:03 CST health check, seeds 0/1 were at approximately
-  377k/287k with current logs, finite reported losses/Q values, periodic
+  commit `6281763`. Seeds 0/1 continue on physical GPUs 2/4. The old fixed-GPU
+  waiters for seeds 2/3/4 were stopped before any training/update and their
+  archives are preserved for the dynamic any-GPU queue.
+- At the 2026-09-11 12:03 CST health check, seeds 0/1 were at approximately
+  479k/348k with current logs, finite reported losses/Q values, periodic
   checkpoints, and no NaN/Inf/OOM/traceback signal in the checked log tail.
-- Formal online branches have not started and may start only after all five
-  initializers pass finite-state, hash, and reload validation.
+- Formal online branches have not started. Each seed may enter its WSRL/Lancet
+  online queue immediately after that initializer passes finite/hash/reload
+  validation; it no longer waits for all five seeds.
 
 ## Environment status
 
@@ -88,22 +90,27 @@ active at lambda=1 for 50k adaptation steps, then update/correction are off.
 - Formal requires a clean pushed frozen commit and all runtime gates.
 - Frozen hashes: dataset `c9fec1c1...7e5b`, source initializer config
   `5af6bf32...4233`, protocol `d17fb7e4...051d`.
-- Resolved WSRL/Lancet base training values match, but logging does not:
-  WSRL is TensorBoard and Lancet is WandB. Resolve this before online formal.
+- Resolved WSRL/Lancet base training values match. Both online configs now use
+  TensorBoard and save final checkpoints; this is infrastructure-only parity.
 - Paired analysis now computes Primary Adaptation AUC on the exact fixed 0–50k
   window and reports longer observed AUC only as a diagnostic.
 - Local email credentials live in ignored `configs/local/lancet_email.env`.
-  One explicit SMTP test was accepted on 2026-09-11; no experiment lifecycle
-  integration exists.
+  SMTP was tested; lifecycle notifications are state-transition-only and their
+  failures cannot fail or relabel a training run.
+- `scripts/experiments/run_training.py` is the single queue/watch entry point.
+  It uses an approximately 5h normal cycle, atomic state/progress files,
+  stable capacity sampling, one formal job per GPU, and attach mode for seed
+  0/1. It does not import the algorithm or add training/evaluation work.
 - Do not modify training code/config during these runs. Preserve and invalidate
   archives rather than overwriting if a real bug is found.
 
 ## Immediate next steps
 
-1. Monitor seed 0/1 numerical and checkpoint health without score-based intervention.
-2. Let queued seeds acquire GPU 2/4 automatically; do not bypass the locks.
-3. Validate each `offline_final.pt` for completion, finite state, hash, and reload.
-4. Run shared-fork equality per seed before any formal online branch.
+1. Keep the detached lifecycle controller alive; inspect it with
+   `python3 scripts/experiments/run_training.py status`.
+2. Let seed 2/3/4 use any GPU that passes the measured dynamic gate.
+3. Validate each `offline_final.pt`; a failed validation must block online.
+4. Permit seed-wise paired online launch only after shared lineage/reload checks.
 
 ## Read next
 

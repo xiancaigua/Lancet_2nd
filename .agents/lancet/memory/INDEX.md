@@ -8,6 +8,8 @@ Current state: [`../CURRENT_STATE.md`](../CURRENT_STATE.md)
 
 | Seq | Date | Topic | Status | File |
 |---|---|---|---|---|
+| 009 | 2026-09-11 | Dynamic formal lifecycle implementation | completed | [memory](2026-09-11_009_dynamic-lifecycle-implementation.md) |
+| 008 | 2026-09-11 | Fixed-GPU waiters retired | completed | [memory](2026-09-11_008_fixed-waiters-retired.md) |
 | 007 | 2026-09-11 | SMTP test | completed | [memory](2026-09-11_007_smtp-test.md) |
 | 006 | 2026-09-11 | Email credentials template | completed | [memory](2026-09-11_006_email-credentials-template.md) |
 | 005 | 2026-09-11 | Formal state and semantics audit | completed | [memory](2026-09-11_005_formal-state-and-semantics-audit.md) |
@@ -48,6 +50,7 @@ was not independently recorded.
 
 ### Environment / Docker
 
+- [Dynamic formal lifecycle implementation](2026-09-11_009_dynamic-lifecycle-implementation.md)
 - [SMTP test](2026-09-11_007_smtp-test.md)
 - [Email credentials template](2026-09-11_006_email-credentials-template.md)
 - [2026-09-08 engineering consolidation](2026-09-08_002_engineering-consolidation.md)
@@ -66,6 +69,7 @@ was not independently recorded.
 
 ### Dataset / experiments
 
+- [Fixed-GPU waiters retired](2026-09-11_008_fixed-waiters-retired.md)
 - [Formal state and semantics audit](2026-09-11_005_formal-state-and-semantics-audit.md)
 - [Formal initializers launched](2026-09-11_004_formal-initializers-launched.md)
 - [External GPU capacity gate](2026-09-11_003_external-gpu-capacity-gate.md)

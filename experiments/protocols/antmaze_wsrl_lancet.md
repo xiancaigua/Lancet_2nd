@@ -253,7 +253,15 @@ Use the existing archive roots and method labels:
 ```
 
 Each process uses one explicit GPU; parallel runs require distinct verified
-idle GPUs. Long jobs use Host tmux or scheduler around the archive launcher.
+safe GPUs. The external lifecycle controller may select any physical device
+whose stable free memory, utilization, foreign-process load, and Lancet lock
+pass the recorded capacity gate. One Lancet formal process is allowed per GPU.
+Scheduling, monitoring, and email belong to a separate infrastructure commit
+and do not change the frozen algorithm commit. Long jobs are detached from SSH.
+
+WSRL and Lancet use the same TensorBoard backend and both save final
+checkpoints. Normal monitoring reads only log tails and GPU metadata at an
+approximately five-hour cadence; it does not load models or run evaluations.
 
 Formal runs require one clean, pushed Git commit for all methods. Reruns are
 allowed only for OOM, host/container/environment failure, corrupted checkpoint,
@@ -273,11 +281,16 @@ archives explicitly. Poor return or an unfavorable seed never permits rerun.
 - [x] Lancet seed-0 debug pilot passed.
 - [x] Diagnostics and reload are finite (except peak-memory scalar, which was
   not collected; no OOM occurred).
-- [ ] Formal configs, dataset/checkpoint hashes, commit, and matrix frozen.
-- [ ] Final clean formal-infrastructure commit pushed.
-- [ ] Formal roots rechecked immediately before launch.
+- [x] Formal initializer config, dataset, protocol, algorithm commit, and
+  five-seed matrix frozen and archived before launch.
+- [x] Formal roots checked and five initializer archives created.
+- [x] Initializer seeds 0/1 confirmed running; seeds 2–4 remain unstarted and
+  are eligible for dynamic re-queue.
+- [ ] Dynamic lifecycle infrastructure commit pushed and recorded.
+- [ ] Every seed-specific initializer/fork validation passed before its online pair.
 
-Formal launch remains unauthorized until every applicable item passes.
+Formal initializer execution is active. Each online pair remains gated on its
+own initializer validation and shared-fork reload evidence.
 
 ## 14. Open scientific questions
 

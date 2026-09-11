@@ -29,9 +29,19 @@ UID/GID, preventing root-owned source artifacts.
 
 ## Long-running work
 
-Tiny smoke tests may run in the current foreground. Formal runs must use the
-archive launcher plus a detached Host tmux/scheduler process. Example control
-session only:
+Tiny smoke tests may run in the current foreground. Formal queued work uses the
+archive launcher plus one detached Host lifecycle controller:
+
+```bash
+python3 scripts/experiments/run_training.py status
+tmux attach -t lancet_formal_lifecycle
+```
+
+The normal controller interval is five hours; GPU/process checks do not run in
+separate per-seed threads. Active managed jobs have a lightweight worker that
+holds the GPU lock and waits on the unchanged archived command. Existing seed
+0/1 initializers are watched in attach mode and are not restarted or migrated.
+Example control session only:
 
 ```bash
 tmux new -s lancet

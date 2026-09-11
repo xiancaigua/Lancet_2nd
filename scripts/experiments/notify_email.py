@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Send an explicitly requested Lancet SMTP notification from the Host."""
+"""Send Lancet lifecycle notifications from the Host.
+
+The module deliberately opens one short-lived SMTP connection per state
+transition. Callers must treat notification failures as infrastructure
+warnings, never as training failures.
+"""
 
 from __future__ import annotations
 
@@ -10,6 +15,7 @@ import socket
 import ssl
 from email.message import EmailMessage
 from pathlib import Path
+from typing import Any
 
 REPO = Path(__file__).resolve().parents[2]
 DEFAULT_ENV_FILE = REPO / "configs/local/lancet_email.env"
@@ -84,6 +90,29 @@ def _send(config: dict[str, object], message: EmailMessage) -> None:
         client.send_message(message)
 
 
+def send_notification(
+    subject: str,
+    body: str,
+    *,
+    env_file: Path = DEFAULT_ENV_FILE,
+    explicit_test: bool = False,
+) -> dict[str, Any]:
+    """Send one message and return a small, secret-free result record."""
+
+    config = _validated(_load_env(env_file), explicit_test=explicit_test)
+    message = EmailMessage()
+    message["Subject"] = subject
+    message["From"] = str(config["LANCET_EMAIL_FROM"])
+    message["To"] = str(config["LANCET_EMAIL_TO"])
+    message.set_content(body)
+    _send(config, message)
+    return {
+        "status": "sent",
+        "subject": subject,
+        "sent_at": dt.datetime.now().astimezone().isoformat(timespec="seconds"),
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--env-file", type=Path, default=DEFAULT_ENV_FILE)
@@ -92,24 +121,29 @@ def main() -> int:
         action="store_true",
         help="Explicitly authorize one test message even when ENABLED=false.",
     )
+    parser.add_argument(
+        "--subject",
+        default="[Lancet] Notification Integration Test",
+        help="Subject for the explicitly authorized test message.",
+    )
     args = parser.parse_args()
     if not args.test:
         raise SystemExit("Only explicit test sends are currently supported; pass --test")
 
     try:
-        config = _validated(_load_env(args.env_file), explicit_test=True)
         now = dt.datetime.now().astimezone().isoformat(timespec="seconds")
-        message = EmailMessage()
-        message["Subject"] = f"[Lancet] SMTP test {now}"
-        message["From"] = str(config["LANCET_EMAIL_FROM"])
-        message["To"] = str(config["LANCET_EMAIL_TO"])
-        message.set_content(
+        body = (
             "Lancet SMTP configuration test succeeded.\n\n"
             f"Host: {socket.gethostname()}\n"
             f"Time: {now}\n"
-            "This message is not connected to the training lifecycle.\n"
+            "This message validates the lifecycle notification integration.\n"
         )
-        _send(config, message)
+        send_notification(
+            args.subject,
+            body,
+            env_file=args.env_file,
+            explicit_test=True,
+        )
     except smtplib.SMTPAuthenticationError as exc:
         print(f"SMTP authentication failed (code {exc.smtp_code}).")
         return 2

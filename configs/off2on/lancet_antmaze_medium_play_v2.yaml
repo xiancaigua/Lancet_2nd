@@ -50,8 +50,9 @@ eval_freq: 0
 num_eval_steps: 20000
 num_eval_episodes: 20
 checkpoint_freq: 25000
+save_final_checkpoint: true
 capture_video: false
-log_type: wandb
+log_type: tensorboard
 seed: 0
 lancet_variant: lancet
 residual_hidden_dim: 128
