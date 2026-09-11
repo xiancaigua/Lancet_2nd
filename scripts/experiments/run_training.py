@@ -753,7 +753,11 @@ def _launch_queued(state_path: Path) -> None:
 
 def _batch_notifications(state_path: Path) -> None:
     state = json.loads(state_path.read_text(encoding="utf-8"))
-    initializers = [job for job in state["jobs"] if job["stage"] == "initializer"]
+    initializers = [
+        job
+        for job in state["jobs"]
+        if job["stage"] == "initializer" and not job.get("superseded_by")
+    ]
     if len(initializers) == 5 and all(job.get("validation_status") == "passed" for job in initializers):
         marker = "formal_initializers_complete"
         with _locked_state(state_path) as current:
@@ -772,7 +776,9 @@ def _batch_notifications(state_path: Path) -> None:
     state = json.loads(state_path.read_text(encoding="utf-8"))
     main_jobs = [
         job for job in state["jobs"]
-        if job["stage"] == "online" and job["method"] in {"wsrl", "lancet"}
+        if job["stage"] == "online"
+        and job["method"] in {"wsrl", "lancet"}
+        and not job.get("superseded_by")
     ]
     if len(main_jobs) == 10 and all(
         job["status"] == "completed" and job["validation_status"] == "passed"
