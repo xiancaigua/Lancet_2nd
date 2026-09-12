@@ -1,6 +1,6 @@
 # Lancet Current Agent State
 
-Last updated: 2026-09-12 00:05 CST  
+Last updated: 2026-09-12 12:14 CST  
 Branch: `main`
 Commit: current infrastructure HEAD; formal training identity remains `62817637beffcbe8b1315d3c0daf03f1fc5fd9a0`
 
@@ -8,6 +8,10 @@ Commit: current infrastructure HEAD; formal training identity remains `62817637b
 
 Operate the five seed-specific shared WSRL offline initializers through one
 dynamic lifecycle queue. Lancet mathematics and the formal protocol are frozen.
+The old-server migration audit is complete; see
+`/home/zhaozihan/Lancet/MIGRATION_SOURCE_MANIFEST.md`. Do not interrupt active
+initializers merely to migrate: their partial checkpoints do not include replay
+snapshots and therefore are not strict off-policy continuation points.
 
 ## Repository and runtime
 

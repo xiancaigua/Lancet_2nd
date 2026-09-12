@@ -8,6 +8,10 @@ Current state: [`../CURRENT_STATE.md`](../CURRENT_STATE.md)
 
 | Seq | Date | Topic | Status | File |
 |---|---|---|---|---|
+| 004 | 2026-09-12 | wsrl-initializer formal | completed | [memory](2026-09-12_004_wsrl-initializer-antmaze-medium-play-v2-formal.md) |
+| 003 | 2026-09-12 | wsrl-initializer formal | completed | [memory](2026-09-12_003_wsrl-initializer-antmaze-medium-play-v2-formal.md) |
+| 002 | 2026-09-12 | Source-server migration audit | completed | [memory](2026-09-12_002_source-migration-audit.md) |
+| 001 | 2026-09-12 | WSRL initializer formal | completed | [memory](2026-09-12_001_wsrl-initializer-antmaze-medium-play-v2-formal.md) |
 | 001 | 2026-09-12 | wsrl-initializer formal | completed | [memory](2026-09-12_001_wsrl-initializer-antmaze-medium-play-v2-formal.md) |
 | 015 | 2026-09-11 | GPU 4 replacement queue | completed | [memory](2026-09-11_015_gpu4-replacement-queue.md) |
 | 014 | 2026-09-11 | GPU 4 exclusion and formal recovery | completed | [memory](2026-09-11_014_gpu4-exclusion-and-recovery.md) |
@@ -57,6 +61,8 @@ was not independently recorded.
 
 ### Environment / Docker
 
+- [Source-server migration audit](2026-09-12_002_source-migration-audit.md)
+
 - [GPU 4 exclusion and formal recovery](2026-09-11_014_gpu4-exclusion-and-recovery.md)
 - [Dynamic formal lifecycle implementation](2026-09-11_009_dynamic-lifecycle-implementation.md)
 - [SMTP test](2026-09-11_007_smtp-test.md)
@@ -76,6 +82,10 @@ was not independently recorded.
 - [Lancet residual scaffold](2026-09-07_004_lancet-residual-scaffold.md)
 
 ### Dataset / experiments
+
+- [wsrl-initializer formal](2026-09-12_004_wsrl-initializer-antmaze-medium-play-v2-formal.md)
+
+- [wsrl-initializer formal](2026-09-12_003_wsrl-initializer-antmaze-medium-play-v2-formal.md)
 
 - [wsrl-initializer formal](2026-09-12_001_wsrl-initializer-antmaze-medium-play-v2-formal.md)
 
