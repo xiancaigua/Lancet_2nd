@@ -1,8 +1,8 @@
 # Lancet Current Agent State
 
-Last updated: 2026-09-14 15:35 CST
+Last updated: 2026-09-14 16:02 CST
 Branch: `integration/upstream-sync-20260914`
-Commit: Lancet migration `ce6575f` after upstream merge `c1125de`; generation-1 formal identity remains `62817637beffcbe8b1315d3c0daf03f1fc5fd9a0`
+Commit: corrected config freeze `352451a` after Lancet migration `ce6575f` and upstream merge `c1125de`; generation-1 formal identity remains `62817637beffcbe8b1315d3c0daf03f1fc5fd9a0`
 
 ## Current objective
 
@@ -53,6 +53,9 @@ repeats all observation keys for B×K local actions, and keeps the base critic
 on the upstream encoder path. Focused Lancet/registry tests pass (42 tests).
 Generation-2 online resolved base-config parity currently passes; broader
 scientific and runtime gates are still pending, so `main` is unchanged.
+The corrected generation-2 initializer explicitly uses the validated CQL
+settings from `3c9c46a`, `bootstrap_at_done=truncated`, and keeps the prior
+`target_entropy=0.0`; no corrected-baseline training has started.
 
 ### Implemented and unit/regression verified
 

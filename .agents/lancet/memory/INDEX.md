@@ -8,6 +8,7 @@ Current state: [`../CURRENT_STATE.md`](../CURRENT_STATE.md)
 
 | Seq | Date | Topic | Status | File |
 |---|---|---|---|---|
+| 005 | 2026-09-14 | corrected WSRL AntMaze freeze | completed | [memory](2026-09-14_005_wsrl-antmaze-correction-freeze.md) |
 | 004 | 2026-09-14 | Lancet upstream API migration | completed | [memory](2026-09-14_004_lancet-upstream-api-migration.md) |
 | 003 | 2026-09-14 | complete upstream merge | completed | [memory](2026-09-14_003_upstream-full-merge.md) |
 | 002 | 2026-09-14 | legacy formal generation superseded | completed | [memory](2026-09-14_002_legacy-formal-superseded.md) |
@@ -103,6 +104,7 @@ was not independently recorded.
 
 ### Dataset / experiments
 
+- [Corrected WSRL AntMaze freeze](2026-09-14_005_wsrl-antmaze-correction-freeze.md)
 - [Legacy formal generation superseded](2026-09-14_002_legacy-formal-superseded.md)
 
 - [lancet formal](2026-09-13_011_lancet-antmaze-medium-play-v2-formal.md)
