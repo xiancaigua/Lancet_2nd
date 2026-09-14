@@ -1,8 +1,8 @@
 # Lancet Current Agent State
 
-Last updated: 2026-09-14 15:13 CST
+Last updated: 2026-09-14 15:35 CST
 Branch: `integration/upstream-sync-20260914`
-Commit: upstream merge `c1125de`; generation-1 formal identity remains `62817637beffcbe8b1315d3c0daf03f1fc5fd9a0`
+Commit: Lancet migration `ce6575f` after upstream merge `c1125de`; generation-1 formal identity remains `62817637beffcbe8b1315d3c0daf03f1fc5fd9a0`
 
 ## Current objective
 
@@ -47,6 +47,12 @@ residual mean. Lancet is inactive offline and through the 5k frozen warmup,
 active at lambda=1 for 50k adaptation steps, then update/correction are off.
 
 ## Implementation status
+
+The merged Lancet now accepts upstream canonical Dict state observations,
+repeats all observation keys for B×K local actions, and keeps the base critic
+on the upstream encoder path. Focused Lancet/registry tests pass (42 tests).
+Generation-2 online resolved base-config parity currently passes; broader
+scientific and runtime gates are still pending, so `main` is unchanged.
 
 ### Implemented and unit/regression verified
 

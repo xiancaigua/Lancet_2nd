@@ -8,6 +8,7 @@ Current state: [`../CURRENT_STATE.md`](../CURRENT_STATE.md)
 
 | Seq | Date | Topic | Status | File |
 |---|---|---|---|---|
+| 004 | 2026-09-14 | Lancet upstream API migration | completed | [memory](2026-09-14_004_lancet-upstream-api-migration.md) |
 | 003 | 2026-09-14 | complete upstream merge | completed | [memory](2026-09-14_003_upstream-full-merge.md) |
 | 002 | 2026-09-14 | legacy formal generation superseded | completed | [memory](2026-09-14_002_legacy-formal-superseded.md) |
 | 001 | 2026-09-14 | pre-upstream-sync safety anchor | completed | [memory](2026-09-14_001_pre-upstream-sync-anchor.md) |
@@ -90,6 +91,7 @@ was not independently recorded.
 
 ### Lancet
 
+- [Lancet upstream API migration](2026-09-14_004_lancet-upstream-api-migration.md)
 - [Complete upstream merge](2026-09-14_003_upstream-full-merge.md)
 
 - [Current Lancet implementation](2026-09-09_004_lancet-implementation.md)
