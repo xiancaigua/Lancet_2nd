@@ -1,13 +1,13 @@
 # Lancet Current Agent State
 
-Last updated: 2026-09-14 15:03 CST
+Last updated: 2026-09-14 15:13 CST
 Branch: `integration/upstream-sync-20260914`
-Commit: pre-merge base `db57e1e9e1ee6e81ffafd99b1547a96e26389df1`; generation-1 formal identity remains `62817637beffcbe8b1315d3c0daf03f1fc5fd9a0`
+Commit: upstream merge `c1125de`; generation-1 formal identity remains `62817637beffcbe8b1315d3c0daf03f1fc5fd9a0`
 
 ## Current objective
 
-Rebuild the code and experimental baseline by fully merging current
-`upstream/main` on an isolated integration branch. The exact pre-resync code is
+Migrate and validate Lancet against fully merged upstream `252d1e0` on an
+isolated integration branch. The exact pre-resync code is
 anchored and pushed at `backup/pre-upstream-sync-20260914` and
 `pre-upstream-sync-20260914`; `main` is not yet changed.
 The old-server migration audit is complete; see
@@ -138,9 +138,9 @@ active at lambda=1 for 50k adaptation steps, then update/correction are off.
 
 ## Immediate next steps
 
-1. Commit the pre-merge migration audit on the integration branch.
-2. Fetch and fully merge current `upstream/main`; migrate Lancet to upstream APIs without changing frozen mathematics.
-3. Pass config, dataset, semantic-parity, checkpoint, test, and real-AntMaze gates before promoting `main`.
+1. Audit merged WSRL/SACCore/observation/policy hooks and migrate Lancet without changing frozen mathematics.
+2. Freeze corrected WSRL/Raw/Centered/Lancet config parity and compare old, bugfix, and current upstream recipes.
+3. Pass dataset, semantic-parity, checkpoint, lint/test, real-AntMaze, and email gates before promoting `main`.
 
 ## Read next
 

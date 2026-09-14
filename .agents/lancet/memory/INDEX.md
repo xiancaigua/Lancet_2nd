@@ -8,6 +8,7 @@ Current state: [`../CURRENT_STATE.md`](../CURRENT_STATE.md)
 
 | Seq | Date | Topic | Status | File |
 |---|---|---|---|---|
+| 003 | 2026-09-14 | complete upstream merge | completed | [memory](2026-09-14_003_upstream-full-merge.md) |
 | 002 | 2026-09-14 | legacy formal generation superseded | completed | [memory](2026-09-14_002_legacy-formal-superseded.md) |
 | 001 | 2026-09-14 | pre-upstream-sync safety anchor | completed | [memory](2026-09-14_001_pre-upstream-sync-anchor.md) |
 | 011 | 2026-09-13 | lancet formal | completed | [memory](2026-09-13_011_lancet-antmaze-medium-play-v2-formal.md) |
@@ -88,6 +89,8 @@ was not independently recorded.
 - [Runtime access and dev wrapper](2026-09-07_003_runtime-access-and-dev-wrapper.md)
 
 ### Lancet
+
+- [Complete upstream merge](2026-09-14_003_upstream-full-merge.md)
 
 - [Current Lancet implementation](2026-09-09_004_lancet-implementation.md)
 
