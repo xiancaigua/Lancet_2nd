@@ -45,8 +45,12 @@ def validate(path: Path, *, expected_updates: int | None = None) -> dict:
         "q_optimizer",
         "actor_optimizer",
         "alpha_optimizer",
-        "cql_alpha_optimizer",
     }
+    hyperparameters = metadata.get("hyperparameters", {})
+    if hyperparameters.get("use_cql_loss") and hyperparameters.get(
+        "cql_autotune_alpha"
+    ):
+        required_optimizers.add("cql_alpha_optimizer")
     optimizers = set(state.get("optimizers", {}))
     missing = sorted(required_optimizers - optimizers)
     if missing:
