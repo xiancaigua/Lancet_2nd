@@ -8,6 +8,7 @@ Current state: [`../CURRENT_STATE.md`](../CURRENT_STATE.md)
 
 | Seq | Date | Topic | Status | File |
 |---|---|---|---|---|
+| 006 | 2026-09-14 | semantic and dataset validation | completed | [memory](2026-09-14_006_semantic-and-dataset-validation.md) |
 | 005 | 2026-09-14 | corrected WSRL AntMaze freeze | completed | [memory](2026-09-14_005_wsrl-antmaze-correction-freeze.md) |
 | 004 | 2026-09-14 | Lancet upstream API migration | completed | [memory](2026-09-14_004_lancet-upstream-api-migration.md) |
 | 003 | 2026-09-14 | complete upstream merge | completed | [memory](2026-09-14_003_upstream-full-merge.md) |
@@ -170,6 +171,7 @@ was not independently recorded.
 
 ### Continuity / tests
 
+- [Semantic and dataset validation](2026-09-14_006_semantic-and-dataset-validation.md)
 - [Shared-fork runtime gate](2026-09-11_011_shared-fork-runtime-gate.md)
 - [Final validation and launcher hardening](2026-09-08_007_final-validation-and-launcher-hardening.md)
 - [Agent continuity and handoff](2026-09-07_006_agent-continuity-and-handoff.md)

@@ -1,8 +1,8 @@
 # Lancet Current Agent State
 
-Last updated: 2026-09-14 16:02 CST
+Last updated: 2026-09-14 17:10 CST
 Branch: `integration/upstream-sync-20260914`
-Commit: corrected config freeze `352451a` after Lancet migration `ce6575f` and upstream merge `c1125de`; generation-1 formal identity remains `62817637beffcbe8b1315d3c0daf03f1fc5fd9a0`
+Commit: semantic validation `a6cb5d0` after corrected config freeze `352451a`, Lancet migration `ce6575f`, and upstream merge `c1125de`; generation-1 formal identity remains `62817637beffcbe8b1315d3c0daf03f1fc5fd9a0`
 
 ## Current objective
 
@@ -50,9 +50,11 @@ active at lambda=1 for 50k adaptation steps, then update/correction are off.
 
 The merged Lancet now accepts upstream canonical Dict state observations,
 repeats all observation keys for B×K local actions, and keeps the base critic
-on the upstream encoder path. Focused Lancet/registry tests pass (42 tests).
-Generation-2 online resolved base-config parity currently passes; broader
-scientific and runtime gates are still pending, so `main` is unchanged.
+on the upstream encoder path. Focused Lancet tests pass (71 tests), core
+WSRL/SAC/CQL/checkpoint regressions pass (174), and observation/replay/off2on
+regressions pass (195). Generation-2 resolved base-config parity and the
+old/new dataset semantic comparison both pass. Real smoke and email gates are
+still pending, so `main` is unchanged.
 The corrected generation-2 initializer explicitly uses the validated CQL
 settings from `3c9c46a`, `bootstrap_at_done=truncated`, and keeps the prior
 `target_entropy=0.0`; no corrected-baseline training has started.
@@ -89,10 +91,10 @@ settings from `3c9c46a`, `bootstrap_at_done=truncated`, and keeps the prior
 - At the 2026-09-11 12:03 CST health check, seeds 0/1 were at approximately
   479k/348k with current logs, finite reported losses/Q values, periodic
   checkpoints, and no NaN/Inf/OOM/traceback signal in the checked log tail.
-- All five shared WSRL initializers have now completed and passed their recorded
-  validation. Online seed 0 and seed 2 WSRL/Lancet pairs completed; seed 3 and
-  seed 4 pairs are running locally; seed 1 remains blocked locally for server
-  6025. Raw/Centered ablations have not launched.
+- Generation-1 had five completed initializers and four completed WSRL/Lancet
+  online pairs (seeds 0, 2, 3, 4); seed 1 remained blocked for server 6025.
+  Every generation-1 job is now classified `SUPERSEDED_PRE_UPSTREAM_SYNC` and
+  no generation-1 controller or training worker remains active on this host.
 - Preliminary snapshot: `/data/lancet/runs/formal/analysis/preliminary_2026-09-13/`.
   The two complete pairs have zero normalized score at every observed
   post-adaptation evaluation, while finite/reload checks pass. This is a
@@ -147,9 +149,9 @@ settings from `3c9c46a`, `bootstrap_at_done=truncated`, and keeps the prior
 
 ## Immediate next steps
 
-1. Audit merged WSRL/SACCore/observation/policy hooks and migrate Lancet without changing frozen mathematics.
-2. Freeze corrected WSRL/Raw/Centered/Lancet config parity and compare old, bugfix, and current upstream recipes.
-3. Pass dataset, semantic-parity, checkpoint, lint/test, real-AntMaze, and email gates before promoting `main`.
+1. Run the upstream-compatible real-AntMaze smoke and checkpoint reload gate.
+2. Test the migrated email notification without exposing credentials.
+3. Resolve the repository-wide Ruff gate (inherited upstream debt) before any `main` promotion.
 
 ## Read next
 
