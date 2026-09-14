@@ -8,6 +8,8 @@ Current state: [`../CURRENT_STATE.md`](../CURRENT_STATE.md)
 
 | Seq | Date | Topic | Status | File |
 |---|---|---|---|---|
+| 002 | 2026-09-14 | legacy formal generation superseded | completed | [memory](2026-09-14_002_legacy-formal-superseded.md) |
+| 001 | 2026-09-14 | pre-upstream-sync safety anchor | completed | [memory](2026-09-14_001_pre-upstream-sync-anchor.md) |
 | 011 | 2026-09-13 | lancet formal | completed | [memory](2026-09-13_011_lancet-antmaze-medium-play-v2-formal.md) |
 | 010 | 2026-09-13 | wsrl formal | completed | [memory](2026-09-13_010_wsrl-antmaze-medium-play-v2-formal.md) |
 | 009 | 2026-09-13 | lancet formal | completed | [memory](2026-09-13_009_lancet-antmaze-medium-play-v2-formal.md) |
@@ -95,6 +97,8 @@ was not independently recorded.
 - [Lancet residual scaffold](2026-09-07_004_lancet-residual-scaffold.md)
 
 ### Dataset / experiments
+
+- [Legacy formal generation superseded](2026-09-14_002_legacy-formal-superseded.md)
 
 - [lancet formal](2026-09-13_011_lancet-antmaze-medium-play-v2-formal.md)
 

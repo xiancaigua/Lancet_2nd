@@ -1,23 +1,24 @@
 # Lancet Current Agent State
 
-Last updated: 2026-09-13 20:46 CST  
-Branch: `main`
-Commit: current infrastructure HEAD; formal training identity remains `62817637beffcbe8b1315d3c0daf03f1fc5fd9a0`
+Last updated: 2026-09-14 15:03 CST
+Branch: `integration/upstream-sync-20260914`
+Commit: pre-merge base `db57e1e9e1ee6e81ffafd99b1547a96e26389df1`; generation-1 formal identity remains `62817637beffcbe8b1315d3c0daf03f1fc5fd9a0`
 
 ## Current objective
 
-Complete the frozen five-seed WSRL-versus-Lancet formal main comparison without
-changing Lancet mathematics or protocol. A preliminary TensorBoard evidence
-snapshot exists, but is not a final statistical conclusion.
+Rebuild the code and experimental baseline by fully merging current
+`upstream/main` on an isolated integration branch. The exact pre-resync code is
+anchored and pushed at `backup/pre-upstream-sync-20260914` and
+`pre-upstream-sync-20260914`; `main` is not yet changed.
 The old-server migration audit is complete; see
 `/home/zhaozihan/Lancet/MIGRATION_SOURCE_MANIFEST.md`. Do not interrupt active
 initializers merely to migrate: their partial checkpoints do not include replay
 snapshots and therefore are not strict off-policy continuation points.
-The seed-1 and seed-3 WSRL/Lancet online pairs are explicitly blocked in this
-server's lifecycle queue at user request; they are intended for server 6025.
-That hold was released for seed 3 at a later user request: WSRL and Lancet
-seed-3 online jobs are now running locally on GPUs 0 and 2; seed 1 remains
-blocked on this server.
+Generation-1 evidence is frozen in
+`experiments/migrations/upstream_sync_20260914/`. Its 17 lifecycle jobs are
+scientifically overlaid as `SUPERSEDED_PRE_UPSTREAM_SYNC`; old data remains
+untouched. The idle generation-1 lifecycle controller has been stopped and no
+Lancet training worker is running on this host.
 
 ## Repository and runtime
 
@@ -115,9 +116,9 @@ active at lambda=1 for 50k adaptation steps, then update/correction are off.
 - Local email credentials live in ignored `configs/local/lancet_email.env`.
   SMTP was tested; lifecycle notifications are state-transition-only and their
   failures cannot fail or relabel a training run.
-- `scripts/experiments/run_training.py` is the single queue/watch entry point;
-  tmux `lancet_formal_lifecycle` is active with PID 66688. The exact pushed
-  infrastructure commit is recorded in `formal_pipeline.json`.
+- `scripts/experiments/run_training.py` remains the generation-1 queue/watch
+  entry point, but its tmux controller was stopped gracefully after the
+  supersession manifest was written. It must not be restarted for generation 1.
   It uses an approximately 5h normal cycle, atomic state/progress files,
   stable capacity sampling, one formal job per GPU, and attach mode for seed
   seed 0. It does not import the algorithm or add training/evaluation work.
@@ -137,12 +138,9 @@ active at lambda=1 for 50k adaptation steps, then update/correction are off.
 
 ## Immediate next steps
 
-1. Let seed 3 and seed 4 online pairs finish; do not infer an effect from
-   intermediate points.
-2. Collect the seed-1 pair from server 6025 and then compute the frozen paired
-   five-seed statistics.
-3. After the main matrix, run a separate handoff/evaluation transition debug
-   audit before changing any Lancet hyperparameter or launching ablations.
+1. Commit the pre-merge migration audit on the integration branch.
+2. Fetch and fully merge current `upstream/main`; migrate Lancet to upstream APIs without changing frozen mathematics.
+3. Pass config, dataset, semantic-parity, checkpoint, test, and real-AntMaze gates before promoting `main`.
 
 ## Read next
 
