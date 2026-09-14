@@ -1,17 +1,23 @@
 # Lancet Current Agent State
 
-Last updated: 2026-09-12 12:14 CST  
+Last updated: 2026-09-13 20:46 CST  
 Branch: `main`
 Commit: current infrastructure HEAD; formal training identity remains `62817637beffcbe8b1315d3c0daf03f1fc5fd9a0`
 
 ## Current objective
 
-Operate the five seed-specific shared WSRL offline initializers through one
-dynamic lifecycle queue. Lancet mathematics and the formal protocol are frozen.
+Complete the frozen five-seed WSRL-versus-Lancet formal main comparison without
+changing Lancet mathematics or protocol. A preliminary TensorBoard evidence
+snapshot exists, but is not a final statistical conclusion.
 The old-server migration audit is complete; see
 `/home/zhaozihan/Lancet/MIGRATION_SOURCE_MANIFEST.md`. Do not interrupt active
 initializers merely to migrate: their partial checkpoints do not include replay
 snapshots and therefore are not strict off-policy continuation points.
+The seed-1 and seed-3 WSRL/Lancet online pairs are explicitly blocked in this
+server's lifecycle queue at user request; they are intended for server 6025.
+That hold was released for seed 3 at a later user request: WSRL and Lancet
+seed-3 online jobs are now running locally on GPUs 0 and 2; seed 1 remains
+blocked on this server.
 
 ## Repository and runtime
 
@@ -73,9 +79,15 @@ active at lambda=1 for 50k adaptation steps, then update/correction are off.
 - At the 2026-09-11 12:03 CST health check, seeds 0/1 were at approximately
   479k/348k with current logs, finite reported losses/Q values, periodic
   checkpoints, and no NaN/Inf/OOM/traceback signal in the checked log tail.
-- Formal online branches have not started. Each seed may enter its WSRL/Lancet
-  online queue immediately after that initializer passes finite/hash/reload
-  validation; it no longer waits for all five seeds.
+- All five shared WSRL initializers have now completed and passed their recorded
+  validation. Online seed 0 and seed 2 WSRL/Lancet pairs completed; seed 3 and
+  seed 4 pairs are running locally; seed 1 remains blocked locally for server
+  6025. Raw/Centered ablations have not launched.
+- Preliminary snapshot: `/data/lancet/runs/formal/analysis/preliminary_2026-09-13/`.
+  The two complete pairs have zero normalized score at every observed
+  post-adaptation evaluation, while finite/reload checks pass. This is a
+  performance concern, not an observed numerical crash; do not alter running
+  formal jobs in response.
 
 ## Environment status
 
@@ -119,14 +131,18 @@ active at lambda=1 for 50k adaptation steps, then update/correction are off.
   found no safe unused non-4 GPU.
 - Do not modify training code/config during these runs. Preserve and invalidate
   archives rather than overwriting if a real bug is found.
+- The preliminary report treats the nonzero boundary-interpolated Lancet AUC as
+  a measurement artifact: it is induced by a pre-adaptation evaluation point,
+  not a post-adaptation success observation.
 
 ## Immediate next steps
 
-1. Keep the detached lifecycle controller alive; inspect it with
-   `python3 scripts/experiments/run_training.py status`.
-2. Let replacement seed 1/4 use any non-4 GPU that passes the dynamic gate.
-3. Validate each `offline_final.pt`; a failed validation must block online.
-4. Permit seed-wise paired online launch only after shared lineage/reload checks.
+1. Let seed 3 and seed 4 online pairs finish; do not infer an effect from
+   intermediate points.
+2. Collect the seed-1 pair from server 6025 and then compute the frozen paired
+   five-seed statistics.
+3. After the main matrix, run a separate handoff/evaluation transition debug
+   audit before changing any Lancet hyperparameter or launching ablations.
 
 ## Read next
 

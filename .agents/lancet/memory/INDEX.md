@@ -8,6 +8,19 @@ Current state: [`../CURRENT_STATE.md`](../CURRENT_STATE.md)
 
 | Seq | Date | Topic | Status | File |
 |---|---|---|---|---|
+| 011 | 2026-09-13 | lancet formal | completed | [memory](2026-09-13_011_lancet-antmaze-medium-play-v2-formal.md) |
+| 010 | 2026-09-13 | wsrl formal | completed | [memory](2026-09-13_010_wsrl-antmaze-medium-play-v2-formal.md) |
+| 009 | 2026-09-13 | lancet formal | completed | [memory](2026-09-13_009_lancet-antmaze-medium-play-v2-formal.md) |
+| 008 | 2026-09-13 | wsrl formal | completed | [memory](2026-09-13_008_wsrl-antmaze-medium-play-v2-formal.md) |
+| 007 | 2026-09-13 | preliminary formal results analysis | completed | [memory](2026-09-13_007_preliminary-formal-results-analysis.md) |
+| 006 | 2026-09-13 | wsrl-initializer formal | completed | [memory](2026-09-13_006_wsrl-initializer-antmaze-medium-play-v2-formal.md) |
+| 005 | 2026-09-13 | lancet formal | completed | [memory](2026-09-13_005_lancet-antmaze-medium-play-v2-formal.md) |
+| 004 | 2026-09-13 | Seed-3 online local launch | completed | [memory](2026-09-13_004_seed3-online-local-launch.md) |
+| 003 | 2026-09-13 | wsrl formal | completed | [memory](2026-09-13_003_wsrl-antmaze-medium-play-v2-formal.md) |
+| 002 | 2026-09-13 | Online queue hold for server 6025 | completed | [memory](2026-09-13_002_online-queue-hold-server-6025.md) |
+| 001 | 2026-09-13 | lancet formal | completed | [memory](2026-09-13_001_lancet-antmaze-medium-play-v2-formal.md) |
+| 006 | 2026-09-12 | wsrl-initializer formal | completed | [memory](2026-09-12_006_wsrl-initializer-antmaze-medium-play-v2-formal.md) |
+| 005 | 2026-09-12 | wsrl formal | completed | [memory](2026-09-12_005_wsrl-antmaze-medium-play-v2-formal.md) |
 | 004 | 2026-09-12 | wsrl-initializer formal | completed | [memory](2026-09-12_004_wsrl-initializer-antmaze-medium-play-v2-formal.md) |
 | 003 | 2026-09-12 | wsrl-initializer formal | completed | [memory](2026-09-12_003_wsrl-initializer-antmaze-medium-play-v2-formal.md) |
 | 002 | 2026-09-12 | Source-server migration audit | completed | [memory](2026-09-12_002_source-migration-audit.md) |
@@ -82,6 +95,26 @@ was not independently recorded.
 - [Lancet residual scaffold](2026-09-07_004_lancet-residual-scaffold.md)
 
 ### Dataset / experiments
+
+- [lancet formal](2026-09-13_011_lancet-antmaze-medium-play-v2-formal.md)
+
+- [wsrl formal](2026-09-13_010_wsrl-antmaze-medium-play-v2-formal.md)
+
+- [lancet formal](2026-09-13_009_lancet-antmaze-medium-play-v2-formal.md)
+
+- [wsrl formal](2026-09-13_008_wsrl-antmaze-medium-play-v2-formal.md)
+
+- [wsrl-initializer formal](2026-09-13_006_wsrl-initializer-antmaze-medium-play-v2-formal.md)
+
+- [lancet formal](2026-09-13_005_lancet-antmaze-medium-play-v2-formal.md)
+
+- [wsrl formal](2026-09-13_003_wsrl-antmaze-medium-play-v2-formal.md)
+
+- [lancet formal](2026-09-13_001_lancet-antmaze-medium-play-v2-formal.md)
+
+- [wsrl-initializer formal](2026-09-12_006_wsrl-initializer-antmaze-medium-play-v2-formal.md)
+
+- [wsrl formal](2026-09-12_005_wsrl-antmaze-medium-play-v2-formal.md)
 
 - [wsrl-initializer formal](2026-09-12_004_wsrl-initializer-antmaze-medium-play-v2-formal.md)
 

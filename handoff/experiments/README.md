@@ -7,7 +7,7 @@ authoritative record. This page is a human-readable index only.
 
 | Protocol | Scope | Status | Entry point |
 |---|---|---|---|
-| AntMaze WSRL vs Lancet | `antmaze-medium-play-v2`; 5 paired seeds; Raw/Centered ablations | shared offline initializer stage running; online not started | [`antmaze_wsrl_lancet.md`](../../experiments/protocols/antmaze_wsrl_lancet.md) |
+| AntMaze WSRL vs Lancet | `antmaze-medium-play-v2`; 5 paired seeds; Raw/Centered ablations | main comparison in progress: seeds 0/2 complete, 3/4 running locally, 1 on server 6025; ablations not started | [`antmaze_wsrl_lancet.md`](../../experiments/protocols/antmaze_wsrl_lancet.md) |
 | Legacy WSRL vs Lancet V1 | `antmaze-medium-play-v2`, 5 paired seeds | superseded; never started; historical only | [`antmaze_wsrl_lancet_v1.md`](../../experiments/protocols/antmaze_wsrl_lancet_v1.md) |
 
 ## Smoke
@@ -43,7 +43,21 @@ authoritative record. This page is a human-readable index only.
 | antmaze-medium-play-v2 | wsrl-initializer | 0 | finished | not collected | `/home/zhaozihan/Lancet/data/runs/formal/antmaze-medium-play-v2/wsrl-initializer/seed_0/20260911_013042` |
 | antmaze-medium-play-v2 | wsrl-initializer | 2 | finished | not collected | `/home/zhaozihan/Lancet/data/runs/formal/antmaze-medium-play-v2/wsrl-initializer/seed_2/20260911_013834` |
 | antmaze-medium-play-v2 | wsrl-initializer | 3 | finished | not collected | `/home/zhaozihan/Lancet/data/runs/formal/antmaze-medium-play-v2/wsrl-initializer/seed_3/20260911_013834` |
+| antmaze-medium-play-v2 | wsrl | 0 | finished | not collected | `/home/zhaozihan/Lancet/data/runs/formal/antmaze-medium-play-v2/wsrl/seed_0/20260912_000600` |
+| antmaze-medium-play-v2 | wsrl-initializer | 1 | finished | not collected | `/home/zhaozihan/Lancet/data/runs/formal/antmaze-medium-play-v2/wsrl-initializer/seed_1/20260911_175532` |
+| antmaze-medium-play-v2 | lancet | 0 | finished | not collected | `/home/zhaozihan/Lancet/data/runs/formal/antmaze-medium-play-v2/lancet/seed_0/20260912_000610` |
+| antmaze-medium-play-v2 | wsrl | 2 | finished | not collected | `/home/zhaozihan/Lancet/data/runs/formal/antmaze-medium-play-v2/wsrl/seed_2/20260912_115947` |
+| antmaze-medium-play-v2 | lancet | 2 | finished | not collected | `/home/zhaozihan/Lancet/data/runs/formal/antmaze-medium-play-v2/lancet/seed_2/20260912_115955` |
+| antmaze-medium-play-v2 | wsrl-initializer | 4 | finished | not collected | `/home/zhaozihan/Lancet/data/runs/formal/antmaze-medium-play-v2/wsrl-initializer/seed_4/20260911_175542` |
+| antmaze-medium-play-v2 | wsrl | 3 | finished | not collected | `/home/zhaozihan/Lancet/data/runs/formal/antmaze-medium-play-v2/wsrl/seed_3/20260912_121449` |
+| antmaze-medium-play-v2 | lancet | 3 | finished | not collected | `/home/zhaozihan/Lancet/data/runs/formal/antmaze-medium-play-v2/lancet/seed_3/20260912_121500` |
+| antmaze-medium-play-v2 | wsrl | 4 | finished | not collected | `/home/zhaozihan/Lancet/data/runs/formal/antmaze-medium-play-v2/wsrl/seed_4/20260913_115245` |
+| antmaze-medium-play-v2 | lancet | 4 | finished | not collected | `/home/zhaozihan/Lancet/data/runs/formal/antmaze-medium-play-v2/lancet/seed_4/20260913_115252` |
 <!-- formal-rows -->
 
 Formal initializer training started on 2026-09-11 from frozen commit `6281763`.
-The online main comparison and component ablations have not started.
+All five initializers have completed. Online seed 0 and seed 2 WSRL/Lancet
+pairs have completed; seed 3/4 pairs are running locally and seed 1 is handled
+on server 6025. Component ablations have not started. The evidence-backed,
+non-final snapshot is
+`/home/zhaozihan/Lancet/data/runs/formal/analysis/preliminary_2026-09-13/PRELIMINARY_FORMAL_RESULTS_ANALYSIS.md`.
