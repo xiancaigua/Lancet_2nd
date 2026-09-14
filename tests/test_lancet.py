@@ -16,7 +16,9 @@ from rl_garden.common.training_phase import InitialTrainingPhase
 
 class DummyVecEnv:
     num_envs = 2
-    single_observation_space = spaces.Box(-1.0, 1.0, shape=(4,), dtype=np.float32)
+    single_observation_space = spaces.Dict(
+        {"state": spaces.Box(-1.0, 1.0, shape=(4,), dtype=np.float32)}
+    )
     single_action_space = spaces.Box(-1.0, 1.0, shape=(2,), dtype=np.float32)
 
 
@@ -57,8 +59,8 @@ def _fill(agent, steps: int = 12) -> None:
     generator = torch.Generator().manual_seed(17)
     for step in range(steps):
         agent.replay_buffer.add(
-            torch.randn(2, 4, generator=generator),
-            torch.randn(2, 4, generator=generator),
+            {"state": torch.randn(2, 4, generator=generator)},
+            {"state": torch.randn(2, 4, generator=generator)},
             torch.randn(2, 2, generator=generator).clamp(-1, 1),
             torch.randn(2, generator=generator),
             torch.ones(2) if step == steps - 1 else torch.zeros(2),
@@ -93,11 +95,24 @@ def test_residual_ensemble_shape_and_exact_zero_initialization():
 def test_zero_init_q_use_equals_base_q():
     agent = _agent()
     _activate(agent)
-    obs = torch.randn(5, 4)
+    obs = {"state": torch.randn(5, 4)}
     actions = torch.randn(5, 2).clamp(-1, 1)
     base = agent._critic_forward(obs, actions, target=False)
     corrected = agent.corrected_q_values(obs, actions)
     assert torch.equal(corrected, base)
+
+
+def test_dict_state_extraction_and_b_by_k_repeat_are_value_preserving():
+    agent = _agent()
+    state = torch.arange(12, dtype=torch.float32).reshape(3, 4)
+    auxiliary = torch.arange(6, dtype=torch.float32).reshape(3, 2)
+    obs = {"state": state, "state_aux": auxiliary}
+    repeated = agent._repeat_observation(obs, 8)
+    assert repeated["state"].shape == (24, 4)
+    assert repeated["state_aux"].shape == (24, 2)
+    assert torch.equal(repeated["state"].reshape(3, 8, 4)[:, 0], state)
+    assert torch.equal(repeated["state_aux"].reshape(3, 8, 2)[:, -1], auxiliary)
+    assert torch.equal(agent._lancet_state_tensor(obs), state)
 
 
 def test_centered_delta_has_zero_action_mean_and_raw_is_unprojected():
@@ -309,7 +324,7 @@ def test_wsrl_checkpoint_fork_and_lancet_round_trip(tmp_path):
     agent.load(shared_path, load_replay_buffer=False)
     for expected, actual in zip(wsrl.policy.parameters(), agent.policy.parameters()):
         assert torch.equal(expected, actual)
-    obs = torch.randn(4, 4)
+    obs = {"state": torch.randn(4, 4)}
     actions = torch.randn(4, 2).clamp(-1, 1)
     base = agent._critic_forward(obs, actions, target=False)
     _activate(agent)

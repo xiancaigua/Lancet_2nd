@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from rl_garden.common.env_args import EnvBackendArgs
+from rl_garden.common.cli_args import resolve_critic_encoder_config, resolve_obs_groups_config
 from rl_garden.training.inspection import construct_agent
 from rl_garden.training.off2on._args import (
     VisionWSRLTrainingArgs,
@@ -16,13 +17,14 @@ from rl_garden.training.off2on._registry import registry
 class LancetOff2OnArgs(VisionWSRLTrainingArgs, EnvBackendArgs):
     """Current Lancet and its capacity-matched residual ablations."""
 
-    obs_mode: str = "state"
     hidden_dim: int = 256
     actor_hidden_layers: int = 2
     critic_hidden_layers: int = 4
     target_entropy: float | str = "auto"
     num_eval_episodes: int | None = None
-    bootstrap_at_done: Literal["always", "never", "truncated"] = "always"
+    policy_log_std_multiplier: float | None = None
+    policy_log_std_offset: float | None = None
+    bootstrap_at_done: Literal["always", "never", "truncated"] = "truncated"
     lancet_variant: Literal["raw", "centered", "lancet"] = "lancet"
     residual_hidden_dim: int = 128
     residual_hidden_layers: int = 2
@@ -42,6 +44,14 @@ class LancetOff2OnArgs(VisionWSRLTrainingArgs, EnvBackendArgs):
 
 def build_lancet(args: LancetOff2OnArgs, env, eval_env, logger, checkpoint_dir):
     from rl_garden.algorithms import Lancet
+
+    image_kwargs: dict = {
+        "encoder_config": args.encoder if args.obs.is_visual else None,
+        "obs_groups": resolve_obs_groups_config(args),
+        "critic_encoder_config": resolve_critic_encoder_config(args),
+    }
+    if args.encoder_sharing is not None:
+        image_kwargs["encoder_sharing"] = args.encoder_sharing
 
     agent = construct_agent(
         Lancet,
@@ -105,6 +115,8 @@ def build_lancet(args: LancetOff2OnArgs, env, eval_env, logger, checkpoint_dir):
             "qf": [args.hidden_dim] * args.critic_hidden_layers,
         },
         target_entropy=args.target_entropy,
+        policy_log_std_multiplier=args.policy_log_std_multiplier,
+        policy_log_std_offset=args.policy_log_std_offset,
         bootstrap_at_done=args.bootstrap_at_done,
         online_cql_alpha=args.online_cql_alpha,
         online_use_cql_loss=args.online_use_cql_loss,
@@ -113,6 +125,9 @@ def build_lancet(args: LancetOff2OnArgs, env, eval_env, logger, checkpoint_dir):
         sparse_reward_mc=args.sparse_reward_mc,
         sparse_negative_reward=args.sparse_negative_reward,
         success_threshold=args.success_threshold,
+        use_sarsa_reference=args.use_sarsa_reference,
+        sarsa_hidden_dims=args.sarsa_hidden_dims,
+        sarsa_lr=args.sarsa_lr,
         lancet_variant=args.lancet_variant,
         residual_hidden_dim=args.residual_hidden_dim,
         residual_hidden_layers=args.residual_hidden_layers,
@@ -139,6 +154,7 @@ def build_lancet(args: LancetOff2OnArgs, env, eval_env, logger, checkpoint_dir):
         checkpoint_freq=args.checkpoint_freq,
         save_replay_buffer=args.save_replay_buffer,
         save_final_checkpoint=args.save_final_checkpoint,
+        **image_kwargs,
     )
     if args.load_checkpoint is not None:
         agent.load(args.load_checkpoint, load_replay_buffer=args.load_replay_buffer)
@@ -151,4 +167,12 @@ def run_lancet(args: LancetOff2OnArgs) -> None:
     run_off2on(args, build_agent=build_lancet, algorithm="lancet")
 
 
-registry.register("lancet", LancetOff2OnArgs, run_lancet)
+def _lancet_algorithm_cls() -> type:
+    from rl_garden.algorithms import Lancet
+
+    return Lancet
+
+
+registry.register(
+    "lancet", LancetOff2OnArgs, run_lancet, algorithm_cls=_lancet_algorithm_cls
+)

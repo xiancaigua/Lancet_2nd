@@ -11,7 +11,9 @@ from rl_garden.algorithms import Lancet
 
 class _Env:
     num_envs = 2
-    single_observation_space = spaces.Box(-1.0, 1.0, shape=(4,), dtype=np.float32)
+    single_observation_space = spaces.Dict(
+        {"state": spaces.Box(-1.0, 1.0, shape=(4,), dtype=np.float32)}
+    )
     single_action_space = spaces.Box(-1.0, 1.0, shape=(2,), dtype=np.float32)
 
 
@@ -41,8 +43,8 @@ def _fill(agent: Lancet) -> None:
     generator = torch.Generator().manual_seed(17)
     for step in range(12):
         agent.replay_buffer.add(
-            torch.randn(2, 4, generator=generator),
-            torch.randn(2, 4, generator=generator),
+            {"state": torch.randn(2, 4, generator=generator)},
+            {"state": torch.randn(2, 4, generator=generator)},
             torch.randn(2, 2, generator=generator).clamp(-1, 1),
             torch.randn(2, generator=generator),
             torch.ones(2) if step == 11 else torch.zeros(2),

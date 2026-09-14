@@ -8,7 +8,7 @@ remains *after* the normal base critic optimizer step.
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from typing import Any, Literal
 
@@ -21,6 +21,7 @@ from torch import nn
 from rl_garden.algorithms.wsrl import WSRL
 from rl_garden.common.optim import make_optimizer
 from rl_garden.networks.mlp import create_mlp
+from rl_garden.observations import ObservationSchema
 
 LancetVariant = Literal["raw", "centered", "lancet"]
 
@@ -143,13 +144,24 @@ class Lancet(WSRL):
         super()._setup_model()
         obs_space = self.env.single_observation_space
         action_space = self.env.single_action_space
-        if not isinstance(obs_space, spaces.Box) or not isinstance(
-            action_space, spaces.Box
-        ):
+        if not isinstance(action_space, spaces.Box):
+            raise TypeError("Lancet requires a continuous Box action space.")
+        schema = ObservationSchema.from_space(obs_space)
+        if not schema.has_state:
+            raise TypeError("Lancet requires at least one canonical state observation key.")
+        if schema.has_images:
             raise TypeError(
-                "Lancet currently supports flat Box observations/actions only."
+                "Lancet currently supports state-only observations; its residual "
+                "does not consume image keys."
             )
-        state_dim = int(np.prod(obs_space.shape))
+        self._lancet_state_keys = schema.state_keys
+        if isinstance(obs_space, spaces.Box):
+            state_dim = int(np.prod(obs_space.shape))
+        else:
+            state_dim = sum(
+                int(np.prod(obs_space.spaces[key].shape))
+                for key in self._lancet_state_keys
+            )
         action_dim = int(np.prod(action_space.shape))
         devices: list[int] = []
         if self.device.type == "cuda":
@@ -196,24 +208,55 @@ class Lancet(WSRL):
         step = self.adaptation_step
         return 1.0 if step is not None and step < self.handoff_window_steps else 0.0
 
-    def residual(self, obs: torch.Tensor, actions: torch.Tensor) -> torch.Tensor:
+    def _lancet_state_tensor(self, obs: Any) -> torch.Tensor:
+        """Extract the flat state used only by the residual branch.
+
+        The base critic continues to consume the complete upstream observation
+        object through its configured encoder. A tensor input is retained only
+        for direct unit-test/backward-compatible calls; algorithm runtime uses
+        the canonical Dict observation contract.
+        """
+
+        if isinstance(obs, torch.Tensor):
+            return obs.reshape(obs.shape[0], -1)
+        if isinstance(obs, Mapping):
+            values = []
+            for key in self._lancet_state_keys:
+                value = obs[key]
+                if not isinstance(value, torch.Tensor):
+                    raise TypeError(f"Lancet state key {key!r} is not a tensor.")
+                values.append(value.reshape(value.shape[0], -1))
+            return torch.cat(values, dim=-1)
+        raise TypeError(f"Unsupported Lancet observation type: {type(obs).__name__}.")
+
+    def residual(self, obs: Any, actions: torch.Tensor) -> torch.Tensor:
         assert self.residual_network is not None
-        return self.residual_network(obs, actions)
+        return self.residual_network(self._lancet_state_tensor(obs), actions)
+
+    @staticmethod
+    def _repeat_observation(obs: Any, count: int) -> Any:
+        def _repeat(value: torch.Tensor) -> torch.Tensor:
+            return (
+                value.unsqueeze(1)
+                .expand(value.shape[0], count, *value.shape[1:])
+                .reshape(value.shape[0] * count, *value.shape[1:])
+            )
+
+        if isinstance(obs, torch.Tensor):
+            return _repeat(obs)
+        if isinstance(obs, Mapping):
+            return {key: _repeat(value) for key, value in obs.items()}
+        raise TypeError(f"Unsupported Lancet observation type: {type(obs).__name__}.")
 
     def _flat_local_inputs(
-        self, obs: torch.Tensor, local_actions: torch.Tensor
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+        self, obs: Any, local_actions: torch.Tensor
+    ) -> tuple[Any, torch.Tensor]:
         batch, count = local_actions.shape[:2]
-        obs_flat = (
-            obs.reshape(batch, -1)
-            .unsqueeze(1)
-            .expand(batch, count, -1)
-            .reshape(batch * count, -1)
-        )
+        obs_flat = self._repeat_observation(obs, count)
         return obs_flat, local_actions.reshape(batch * count, -1)
 
     def residual_local(
-        self, obs: torch.Tensor, local_actions: torch.Tensor
+        self, obs: Any, local_actions: torch.Tensor
     ) -> torch.Tensor:
         batch, count = local_actions.shape[:2]
         obs_flat, action_flat = self._flat_local_inputs(obs, local_actions)
@@ -222,7 +265,7 @@ class Lancet(WSRL):
         )
 
     def _local_actions(
-        self, obs: torch.Tensor, replay_actions: torch.Tensor
+        self, obs: Any, replay_actions: torch.Tensor
     ) -> torch.Tensor:
         assert self._local_action_generator is not None
         with torch.no_grad():
@@ -293,7 +336,7 @@ class Lancet(WSRL):
 
     def corrected_q_values(
         self,
-        obs: torch.Tensor,
+        obs: Any,
         actions: torch.Tensor,
         local_actions: torch.Tensor | None = None,
     ) -> torch.Tensor:
@@ -435,9 +478,7 @@ class Lancet(WSRL):
         assert self.residual_network is not None
         alpha = self._current_alpha().detach()
         with self._frozen_q_parameters():
-            action, log_prob, actor_features = self.policy.actor_action_log_prob(
-                data.obs, stop_gradient=self._actor_stop_gradient()
-            )
+            action, log_prob, actor_features = self._actor_action_log_prob(data.obs)
             critic_features = self.policy.critic_features_for(
                 data.obs, actor_features, stop_gradient=True
             )
