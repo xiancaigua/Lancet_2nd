@@ -11,13 +11,12 @@ from __future__ import annotations
 import argparse
 import html
 import json
-import math
 from datetime import datetime, timezone
+from itertools import pairwise
 from pathlib import Path
 from typing import Any
 
 from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
-
 
 FORMAL_ENV = "antmaze-medium-play-v2"
 WARMUP_STEPS = 5_000
@@ -67,7 +66,9 @@ def completed_pairs(jobs: list[dict[str, Any]]) -> dict[int, dict[str, dict[str,
         if method not in {"wsrl", "lancet"}:
             continue
         result.setdefault(int(job["seed"]), {})[method] = job
-    return {seed: pair for seed, pair in result.items() if set(pair) == {"wsrl", "lancet"}}
+    return {
+        seed: pair for seed, pair in result.items() if set(pair) == {"wsrl", "lancet"}
+    }
 
 
 def interpolation(curve: list[tuple[int, float]], step: int) -> float:
@@ -76,7 +77,7 @@ def interpolation(curve: list[tuple[int, float]], step: int) -> float:
         return curve[0][1]
     if step >= curve[-1][0]:
         return curve[-1][1]
-    for (left_s, left_v), (right_s, right_v) in zip(curve, curve[1:]):
+    for (left_s, left_v), (right_s, right_v) in pairwise(curve):
         if left_s <= step <= right_s:
             return left_v + (right_v - left_v) * (step - left_s) / (right_s - left_s)
     raise RuntimeError("unreachable")
@@ -88,13 +89,18 @@ def trapezoid_auc_mean(curve: list[tuple[int, float]], start: int, end: int) -> 
     points += [(end, interpolation(curve, end))]
     area = sum(
         (right_s - left_s) * (left_v + right_v) / 2
-        for (left_s, left_v), (right_s, right_v) in zip(points, points[1:])
+        for (left_s, left_v), (right_s, right_v) in pairwise(points)
     )
     return area / (end - start)
 
 
 def svg_line_chart(
-    panels: list[dict[str, Any]], title: str, output: Path, *, width: int = 1120, height: int = 460
+    panels: list[dict[str, Any]],
+    title: str,
+    output: Path,
+    *,
+    width: int = 1120,
+    height: int = 460,
 ) -> None:
     """Write a compact multi-panel SVG line chart using only the Python stdlib."""
     margin_left, margin_right, margin_top, margin_bottom = 65, 25, 55, 54
@@ -104,8 +110,8 @@ def svg_line_chart(
     plot_height = height - margin_top - margin_bottom
     text: list[str] = [
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">',
-        '<style>text{font-family:Arial,sans-serif;fill:#172033}.title{font-size:18px;font-weight:700}.label{font-size:12px}.small{font-size:11px}.grid{stroke:#d9dee8;stroke-width:1}.axis{stroke:#5e6b80;stroke-width:1.2}</style>',
-        f'<text x="{width/2:.1f}" y="27" text-anchor="middle" class="title">{html.escape(title)}</text>',
+        "<style>text{font-family:Arial,sans-serif;fill:#172033}.title{font-size:18px;font-weight:700}.label{font-size:12px}.small{font-size:11px}.grid{stroke:#d9dee8;stroke-width:1}.axis{stroke:#5e6b80;stroke-width:1.2}</style>",
+        f'<text x="{width / 2:.1f}" y="27" text-anchor="middle" class="title">{html.escape(title)}</text>',
     ]
     colors = ["#2563eb", "#d97706", "#059669", "#dc2626"]
     for index, panel in enumerate(panels):
@@ -113,41 +119,77 @@ def svg_line_chart(
         y0 = margin_top
         x_min, x_max = panel["xlim"]
         y_min, y_max = panel["ylim"]
-        def px(x: float) -> float:
+
+        def px(
+            x: float,
+            x0: float = x0,
+            x_min: float = x_min,
+            x_max: float = x_max,
+        ) -> float:
             return x0 + (x - x_min) / (x_max - x_min) * panel_width
-        def py(y: float) -> float:
+
+        def py(
+            y: float,
+            y0: float = y0,
+            y_min: float = y_min,
+            y_max: float = y_max,
+        ) -> float:
             return y0 + plot_height - (y - y_min) / (y_max - y_min) * plot_height
-        text.append(f'<text x="{x0 + panel_width/2:.1f}" y="47" text-anchor="middle" class="label">{html.escape(panel["title"])}</text>')
+
+        text.append(
+            f'<text x="{x0 + panel_width / 2:.1f}" y="47" text-anchor="middle" class="label">{html.escape(panel["title"])}</text>'
+        )
         for tick in panel.get("yticks", []):
             y = py(tick)
-            text += [f'<line x1="{x0:.1f}" y1="{y:.1f}" x2="{x0+panel_width:.1f}" y2="{y:.1f}" class="grid"/>',
-                     f'<text x="{x0-7:.1f}" y="{y+4:.1f}" text-anchor="end" class="small">{tick:g}</text>']
+            text += [
+                f'<line x1="{x0:.1f}" y1="{y:.1f}" x2="{x0 + panel_width:.1f}" y2="{y:.1f}" class="grid"/>',
+                f'<text x="{x0 - 7:.1f}" y="{y + 4:.1f}" text-anchor="end" class="small">{tick:g}</text>',
+            ]
         for tick in panel.get("xticks", []):
             x = px(tick)
-            text += [f'<line x1="{x:.1f}" y1="{y0:.1f}" x2="{x:.1f}" y2="{y0+plot_height:.1f}" class="grid"/>',
-                     f'<text x="{x:.1f}" y="{y0+plot_height+18:.1f}" text-anchor="middle" class="small">{tick/1000:g}k</text>']
-        text += [f'<line x1="{x0:.1f}" y1="{y0+plot_height:.1f}" x2="{x0+panel_width:.1f}" y2="{y0+plot_height:.1f}" class="axis"/>',
-                 f'<line x1="{x0:.1f}" y1="{y0:.1f}" x2="{x0:.1f}" y2="{y0+plot_height:.1f}" class="axis"/>']
+            text += [
+                f'<line x1="{x:.1f}" y1="{y0:.1f}" x2="{x:.1f}" y2="{y0 + plot_height:.1f}" class="grid"/>',
+                f'<text x="{x:.1f}" y="{y0 + plot_height + 18:.1f}" text-anchor="middle" class="small">{tick / 1000:g}k</text>',
+            ]
+        text += [
+            f'<line x1="{x0:.1f}" y1="{y0 + plot_height:.1f}" x2="{x0 + panel_width:.1f}" y2="{y0 + plot_height:.1f}" class="axis"/>',
+            f'<line x1="{x0:.1f}" y1="{y0:.1f}" x2="{x0:.1f}" y2="{y0 + plot_height:.1f}" class="axis"/>',
+        ]
         for marker, marker_label in panel.get("markers", []):
             if x_min <= marker <= x_max:
                 x = px(marker)
-                text.append(f'<line x1="{x:.1f}" y1="{y0:.1f}" x2="{x:.1f}" y2="{y0+plot_height:.1f}" stroke="#64748b" stroke-dasharray="4 3"/>')
-                text.append(f'<text x="{x+3:.1f}" y="{y0+13:.1f}" class="small">{html.escape(marker_label)}</text>')
+                text.append(
+                    f'<line x1="{x:.1f}" y1="{y0:.1f}" x2="{x:.1f}" y2="{y0 + plot_height:.1f}" stroke="#64748b" stroke-dasharray="4 3"/>'
+                )
+                text.append(
+                    f'<text x="{x + 3:.1f}" y="{y0 + 13:.1f}" class="small">{html.escape(marker_label)}</text>'
+                )
         for series_index, series in enumerate(panel["series"]):
-            points = [(px(x), py(y)) for x, y in series["points"] if x_min <= x <= x_max]
+            points = [
+                (px(x), py(y)) for x, y in series["points"] if x_min <= x <= x_max
+            ]
             if not points:
                 continue
-            path = " ".join(("M" if i == 0 else "L") + f"{x:.1f},{y:.1f}" for i, (x, y) in enumerate(points))
+            path = " ".join(
+                ("M" if i == 0 else "L") + f"{x:.1f},{y:.1f}"
+                for i, (x, y) in enumerate(points)
+            )
             color = series.get("color", colors[series_index % len(colors)])
-            text.append(f'<path d="{path}" fill="none" stroke="{color}" stroke-width="2.2"/>')
-            text.append(f'<circle cx="{points[-1][0]:.1f}" cy="{points[-1][1]:.1f}" r="3" fill="{color}"/>')
+            text.append(
+                f'<path d="{path}" fill="none" stroke="{color}" stroke-width="2.2"/>'
+            )
+            text.append(
+                f'<circle cx="{points[-1][0]:.1f}" cy="{points[-1][1]:.1f}" r="3" fill="{color}"/>'
+            )
         for series_index, series in enumerate(panel["series"]):
             color = series.get("color", colors[series_index % len(colors)])
             lx = x0 + 6 + series_index * 106
             ly = y0 + plot_height + 39
-            text += [f'<line x1="{lx:.1f}" y1="{ly-4:.1f}" x2="{lx+16:.1f}" y2="{ly-4:.1f}" stroke="{color}" stroke-width="2.2"/>',
-                     f'<text x="{lx+20:.1f}" y="{ly:.1f}" class="small">{html.escape(series["label"])}</text>']
-    text.append('</svg>')
+            text += [
+                f'<line x1="{lx:.1f}" y1="{ly - 4:.1f}" x2="{lx + 16:.1f}" y2="{ly - 4:.1f}" stroke="{color}" stroke-width="2.2"/>',
+                f'<text x="{lx + 20:.1f}" y="{ly:.1f}" class="small">{html.escape(series["label"])}</text>',
+            ]
+    text.append("</svg>")
     output.write_text("\n".join(text) + "\n", encoding="utf-8")
 
 
@@ -157,10 +199,23 @@ def online_curve(archive: Path, online_start: int, tag: str) -> list[tuple[int, 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--runs-root", type=Path, default=Path("/data/lancet/runs/formal"))
+    parser.add_argument(
+        "--runs-root", type=Path, default=Path("/data/lancet/runs/formal_v2")
+    )
+    parser.add_argument(
+        "--include-superseded-generation1",
+        action="store_true",
+        help="Explicitly allow analysis of the archived pre-upstream formal root.",
+    )
     parser.add_argument("--output-dir", type=Path, required=True)
     args = parser.parse_args()
     runs_root = args.runs_root
+    if runs_root.name == "formal" and not args.include_superseded_generation1:
+        raise SystemExit(
+            "Generation-1 formal data is SUPERSEDED_PRE_UPSTREAM_SYNC. "
+            "Use /data/lancet/runs/formal_v2 (default), or pass "
+            "--include-superseded-generation1 for an explicit legacy audit."
+        )
     out = args.output_dir
     figures = out / "figures"
     figures.mkdir(parents=True, exist_ok=True)
@@ -173,7 +228,10 @@ def main() -> int:
     pair_rows = []
     score_panels = []
     for seed, pair in sorted(pairs.items()):
-        wsrl_archive, lancet_archive = archive_for_job(pair["wsrl"]), archive_for_job(pair["lancet"])
+        wsrl_archive, lancet_archive = (
+            archive_for_job(pair["wsrl"]),
+            archive_for_job(pair["lancet"]),
+        )
         lancet_summary = read_json(lancet_archive / "metrics" / "summary.json")
         online_start = int(lancet_summary["online_start_global_step"])
         adaptation_start = int(lancet_summary["adaptation_start_global_step"])
@@ -181,32 +239,60 @@ def main() -> int:
             "WSRL": scalar_events(wsrl_archive, "eval/normalized_score"),
             "Lancet": scalar_events(lancet_archive, "eval/normalized_score"),
         }
-        post = {method: [(s, v) for s, v in curve if s >= adaptation_start] for method, curve in curves.items()}
+        post = {
+            method: [(s, v) for s, v in curve if s >= adaptation_start]
+            for method, curve in curves.items()
+        }
         endpoint = min(curve[-1][0] for curve in curves.values())
-        pair_rows.append({
-            "seed": seed,
-            "online_start": online_start,
-            "adaptation_start": adaptation_start,
-            "final_online": endpoint - online_start,
-            "wsrl_final": interpolation(curves["WSRL"], endpoint),
-            "lancet_final": interpolation(curves["Lancet"], endpoint),
-            "wsrl_post_max": max(value for _, value in post["WSRL"]),
-            "lancet_post_max": max(value for _, value in post["Lancet"]),
-            "wsrl_auc50_interpolated": trapezoid_auc_mean(curves["WSRL"], adaptation_start, adaptation_start + 50_000),
-            "lancet_auc50_interpolated": trapezoid_auc_mean(curves["Lancet"], adaptation_start, adaptation_start + 50_000),
-            "wsrl_post_points": len(post["WSRL"]),
-            "lancet_post_points": len(post["Lancet"]),
-        })
-        score_panels.append({
-            "title": f"Completed pair: seed {seed}", "xlim": (0, 500_032), "ylim": (0, 20),
-            "xticks": [0, 100_000, 250_000, 500_000], "yticks": [0, 5, 10, 15, 20],
-            "markers": [(WARMUP_STEPS, "warmup"), (ACTIVE_WINDOW_END, "Lancet off")],
-            "series": [
-                {"label": "WSRL", "points": [(s-online_start, v) for s, v in curves["WSRL"]]},
-                {"label": "Lancet", "points": [(s-online_start, v) for s, v in curves["Lancet"]]},
-            ],
-        })
-    svg_line_chart(score_panels, "Completed formal pairs: normalized score (20 evaluation episodes)", figures / "completed_pairs_score.svg", height=430)
+        pair_rows.append(
+            {
+                "seed": seed,
+                "online_start": online_start,
+                "adaptation_start": adaptation_start,
+                "final_online": endpoint - online_start,
+                "wsrl_final": interpolation(curves["WSRL"], endpoint),
+                "lancet_final": interpolation(curves["Lancet"], endpoint),
+                "wsrl_post_max": max(value for _, value in post["WSRL"]),
+                "lancet_post_max": max(value for _, value in post["Lancet"]),
+                "wsrl_auc50_interpolated": trapezoid_auc_mean(
+                    curves["WSRL"], adaptation_start, adaptation_start + 50_000
+                ),
+                "lancet_auc50_interpolated": trapezoid_auc_mean(
+                    curves["Lancet"], adaptation_start, adaptation_start + 50_000
+                ),
+                "wsrl_post_points": len(post["WSRL"]),
+                "lancet_post_points": len(post["Lancet"]),
+            }
+        )
+        score_panels.append(
+            {
+                "title": f"Completed pair: seed {seed}",
+                "xlim": (0, 500_032),
+                "ylim": (0, 20),
+                "xticks": [0, 100_000, 250_000, 500_000],
+                "yticks": [0, 5, 10, 15, 20],
+                "markers": [
+                    (WARMUP_STEPS, "warmup"),
+                    (ACTIVE_WINDOW_END, "Lancet off"),
+                ],
+                "series": [
+                    {
+                        "label": "WSRL",
+                        "points": [(s - online_start, v) for s, v in curves["WSRL"]],
+                    },
+                    {
+                        "label": "Lancet",
+                        "points": [(s - online_start, v) for s, v in curves["Lancet"]],
+                    },
+                ],
+            }
+        )
+    svg_line_chart(
+        score_panels,
+        "Completed formal pairs: normalized score (20 evaluation episodes)",
+        figures / "completed_pairs_score.svg",
+        height=430,
+    )
 
     # Mechanism trace for seed 0 only, the first complete Lancet archive.
     seed0 = pairs[min(pairs)]
@@ -214,16 +300,61 @@ def main() -> int:
     summary0 = read_json(lancet0 / "metrics" / "summary.json")
     online_start0 = int(summary0["online_start_global_step"])
     lambda_curve = online_curve(lancet0, online_start0, "lancet/lambda")
-    ratio_curve = [(x, y * 10_000) for x, y in online_curve(lancet0, online_start0, "lancet/delta_q_ratio")]
+    ratio_curve = [
+        (x, y * 10_000)
+        for x, y in online_curve(lancet0, online_start0, "lancet/delta_q_ratio")
+    ]
     weight_curve = online_curve(lancet0, online_start0, "lancet/weight_mean")
-    svg_line_chart([
-        {"title": "Lancet λ", "xlim": (0, 60_000), "ylim": (-0.05, 1.05), "xticks": [0, 5_000, 55_000], "yticks": [0, 0.5, 1], "markers": [(WARMUP_STEPS, "adapt"), (ACTIVE_WINDOW_END, "off")], "series": [{"label": "lambda", "points": lambda_curve, "color": "#d97706"}]},
-        {"title": "|Δ| / |Qbase| (×10⁴)", "xlim": (0, 60_000), "ylim": (0, max(1.0, max((y for _, y in ratio_curve), default=1.0) * 1.1)), "xticks": [0, 5_000, 55_000], "yticks": [0, 1, 3, 5, 7], "markers": [(WARMUP_STEPS, "adapt"), (ACTIVE_WINDOW_END, "off")], "series": [{"label": "ratio", "points": ratio_curve, "color": "#059669"}]},
-        {"title": "U fit weight", "xlim": (0, 60_000), "ylim": (1, 3), "xticks": [0, 5_000, 55_000], "yticks": [1, 2, 3], "markers": [(WARMUP_STEPS, "adapt"), (ACTIVE_WINDOW_END, "off")], "series": [{"label": "weight", "points": weight_curve, "color": "#2563eb"}]},
-    ], "Seed 0 Lancet mechanism diagnostics (active handoff only)", figures / "seed0_lancet_mechanism.svg", height=410)
+    svg_line_chart(
+        [
+            {
+                "title": "Lancet λ",
+                "xlim": (0, 60_000),
+                "ylim": (-0.05, 1.05),
+                "xticks": [0, 5_000, 55_000],
+                "yticks": [0, 0.5, 1],
+                "markers": [(WARMUP_STEPS, "adapt"), (ACTIVE_WINDOW_END, "off")],
+                "series": [
+                    {"label": "lambda", "points": lambda_curve, "color": "#d97706"}
+                ],
+            },
+            {
+                "title": "|Δ| / |Qbase| (×10⁴)",
+                "xlim": (0, 60_000),
+                "ylim": (
+                    0,
+                    max(1.0, max((y for _, y in ratio_curve), default=1.0) * 1.1),
+                ),
+                "xticks": [0, 5_000, 55_000],
+                "yticks": [0, 1, 3, 5, 7],
+                "markers": [(WARMUP_STEPS, "adapt"), (ACTIVE_WINDOW_END, "off")],
+                "series": [
+                    {"label": "ratio", "points": ratio_curve, "color": "#059669"}
+                ],
+            },
+            {
+                "title": "U fit weight",
+                "xlim": (0, 60_000),
+                "ylim": (1, 3),
+                "xticks": [0, 5_000, 55_000],
+                "yticks": [1, 2, 3],
+                "markers": [(WARMUP_STEPS, "adapt"), (ACTIVE_WINDOW_END, "off")],
+                "series": [
+                    {"label": "weight", "points": weight_curve, "color": "#2563eb"}
+                ],
+            },
+        ],
+        "Seed 0 Lancet mechanism diagnostics (active handoff only)",
+        figures / "seed0_lancet_mechanism.svg",
+        height=410,
+    )
 
     # Incomplete runs are visualized separately and never used for an effect claim.
-    live = [job for job in jobs if job.get("stage") == "online" and job.get("status") == "running"]
+    live = [
+        job
+        for job in jobs
+        if job.get("stage") == "online" and job.get("status") == "running"
+    ]
     live_by_seed: dict[int, dict[str, dict[str, Any]]] = {}
     for job in live:
         if job.get("method") in {"wsrl", "lancet"}:
@@ -237,22 +368,58 @@ def main() -> int:
             events = scalar_events(archive, "eval/normalized_score")
             online_start = 1_000_000
             if events:
-                series.append({"label": method.upper(), "points": [(s-online_start, v) for s, v in events]})
-                live_rows.append({"seed": seed, "method": method, "last_global": events[-1][0], "last_online": events[-1][0]-online_start, "last_score": events[-1][1], "max_score": max(v for _, v in events), "gpu": job.get("gpu_id")})
+                series.append(
+                    {
+                        "label": method.upper(),
+                        "points": [(s - online_start, v) for s, v in events],
+                    }
+                )
+                live_rows.append(
+                    {
+                        "seed": seed,
+                        "method": method,
+                        "last_global": events[-1][0],
+                        "last_online": events[-1][0] - online_start,
+                        "last_score": events[-1][1],
+                        "max_score": max(v for _, v in events),
+                        "gpu": job.get("gpu_id"),
+                    }
+                )
         if series:
-            live_panels.append({"title": f"Running seed {seed} (interim)", "xlim": (0, 500_032), "ylim": (0, 100), "xticks": [0, 100_000, 250_000, 500_000], "yticks": [0, 25, 50, 75, 100], "markers": [(WARMUP_STEPS, "warmup"), (ACTIVE_WINDOW_END, "Lancet off")], "series": series})
+            live_panels.append(
+                {
+                    "title": f"Running seed {seed} (interim)",
+                    "xlim": (0, 500_032),
+                    "ylim": (0, 100),
+                    "xticks": [0, 100_000, 250_000, 500_000],
+                    "yticks": [0, 25, 50, 75, 100],
+                    "markers": [
+                        (WARMUP_STEPS, "warmup"),
+                        (ACTIVE_WINDOW_END, "Lancet off"),
+                    ],
+                    "series": series,
+                }
+            )
     if live_panels:
-        svg_line_chart(live_panels, "Running formal branches: interim normalized score (not evidence)", figures / "running_branches_score.svg", height=430)
+        svg_line_chart(
+            live_panels,
+            "Running formal branches: interim normalized score (not evidence)",
+            figures / "running_branches_score.svg",
+            height=430,
+        )
 
     timestamp = datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
     rows_md = "\n".join(
         f"| {r['seed']} | {r['final_online']:,} | {r['wsrl_final']:.1f} | {r['lancet_final']:.1f} | {r['wsrl_post_max']:.1f} | {r['lancet_post_max']:.1f} | {r['wsrl_auc50_interpolated']:.4f} | {r['lancet_auc50_interpolated']:.4f} |"
         for r in pair_rows
     )
-    live_md = "\n".join(
-        f"| {r['seed']} | {r['method']} | GPU {r['gpu']} | {r['last_online']:,} | {r['last_score']:.1f} | {r['max_score']:.1f} |"
-        for r in live_rows
-    ) or "| — | — | — | — | — | — |"
+    live_md = (
+        "\n".join(
+            f"| {r['seed']} | {r['method']} | GPU {r['gpu']} | {r['last_online']:,} | {r['last_score']:.1f} | {r['max_score']:.1f} |"
+            for r in live_rows
+        )
+        or "| — | — | — | — | — | — |"
+    )
     report = f"""# Lancet formal benchmark：初步结果分析
 
 > 生成时间：`{timestamp}`。本报告只分析当前归档中的 TensorBoard/scalar 数据；它不是最终论文结论。正式主比较要求 5 个 paired seeds，目前仅有 {len(pair_rows)} 个完整 pair。
@@ -272,7 +439,7 @@ def main() -> int:
 
 ![Seed 0 Lancet mechanism](figures/seed0_lancet_mechanism.svg)
 
-{'![Running branch scores](figures/running_branches_score.svg)' if live_panels else ''}
+{"![Running branch scores](figures/running_branches_score.svg)" if live_panels else ""}
 
 ## Completed paired evidence
 
@@ -361,8 +528,21 @@ Raw/Centered/Lancet ablations在当前主 comparison 无 recovery signal 时仍�
 
 The report is a snapshot: running-run charts will differ when regenerated.
 """
-    (out / "PRELIMINARY_FORMAL_RESULTS_ANALYSIS.md").write_text(report, encoding="utf-8")
-    (out / "evidence_snapshot.json").write_text(json.dumps({"generated_at": timestamp, "completed_pairs": pair_rows, "running_branches": live_rows}, indent=2) + "\n", encoding="utf-8")
+    (out / "PRELIMINARY_FORMAL_RESULTS_ANALYSIS.md").write_text(
+        report, encoding="utf-8"
+    )
+    (out / "evidence_snapshot.json").write_text(
+        json.dumps(
+            {
+                "generated_at": timestamp,
+                "completed_pairs": pair_rows,
+                "running_branches": live_rows,
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     print(out / "PRELIMINARY_FORMAL_RESULTS_ANALYSIS.md")
     return 0
 

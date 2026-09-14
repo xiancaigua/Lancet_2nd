@@ -1,9 +1,24 @@
 # AntMaze WSRL vs Lancet Benchmark Protocol
 
-Status: **pre-registered; implementation/runtime gates passed; formal runs not started**
+Status: **generation-2 upstream-resync validation in progress; formal v2 not started**
 Protocol date: 2026-09-09
 Environment: `antmaze-medium-play-v2`
 Implementation contract: `docs/design/lancet-implementation.md`
+
+## Migration / baseline correction note (2026-09-14)
+
+Formal generation 1 is `SUPERSEDED_PRE_UPSTREAM_SYNC`. It was launched before
+upstream commit `3c9c46a` identified/corrected the WSRL AntMaze CQL/Cal-QL
+recipe and before the framework adopted the canonical Dict observation and
+replay/policy contracts. Its runs and checkpoints are preserved under
+`/data/lancet/runs/formal` and `/data/lancet/checkpoints/formal` for debugging
+and migration evidence, but they are excluded from all confirmatory statistics.
+
+This rerun is allowed because the baseline implementation/configuration
+identity changed, not because generation-1 returns were unfavorable. Formal
+generation 2 uses only newly trained shared initializers and writes only to
+`/data/lancet/{runs,checkpoints}/formal_v2`. Old checkpoints are not compatible
+scientific initializers for the new observation architecture.
 
 ## 1. Research question
 
@@ -59,6 +74,9 @@ They must resolve identically for every base parameter across online branches.
 | actor / critic / alpha LR | 1e-4 / 3e-4 / 1e-4 |
 | target entropy / entropy backup | 0 / false |
 | offline objective | CQL + Cal-QL lower bound; alpha 5; target gap 0.8 |
+| CQL correction | Lagrange init=e; `exp_clip`; always clip; `lagrange_times_alpha` |
+| CQL sampling/backup/temp | importance sample=true; max target backup=true; temp=1 |
+| terminal bootstrap | `truncated` |
 | online CQL | disabled |
 | evaluation cadence | nominally every 2,000 online steps; 20 episodes |
 | formal checkpoint cadence | every 25,000 actual online steps plus final |
@@ -66,6 +84,11 @@ They must resolve identically for every base parameter across online branches.
 `use_calql=true` is the existing rl-garden WSRL recipe rather than the
 official JAX plain-CQL initializer. It is shared by all branches and must be
 named accurately in reporting.
+
+The 1,000,000 offline step budget means approximately 1,000,000 critic update
+units. Although the shared config records `utd=4` for the later online phase,
+the manual offline pretraining loop calls one gradient step per offline unit;
+it must not be reinterpreted as four 256-example online high-UTD minibatches.
 
 ## 4. Shared offline checkpoint fork
 
@@ -245,11 +268,11 @@ checkpoint. Lancet reload includes inherited actor/base/target/alpha and base
 optimizers plus residual network/optimizer, EMA, adaptation counters, variant,
 and local RNG.
 
-Use the existing archive roots and method labels:
+Use generation-specific archive roots and the existing method labels:
 
 ```text
-/data/lancet/runs/{debug,formal}/antmaze-medium-play-v2/{wsrl,raw-residual,centered-residual,lancet}/seed_<s>/<timestamp>/
-/data/lancet/checkpoints/{debug,formal}/...
+/data/lancet/runs/formal_v2/antmaze-medium-play-v2/{wsrl,raw-residual,centered-residual,lancet}/seed_<s>/<timestamp>/
+/data/lancet/checkpoints/formal_v2/...
 ```
 
 Each process uses one explicit GPU; parallel runs require distinct verified
@@ -258,6 +281,20 @@ whose stable free memory, utilization, foreign-process load, and Lancet lock
 pass the recorded capacity gate. One Lancet formal process is allowed per GPU.
 Scheduling, monitoring, and email belong to a separate infrastructure commit
 and do not change the frozen algorithm commit. Long jobs are detached from SSH.
+
+## Generation-2 launch stages
+
+1. Train one corrected 1M-update WSRL initializer for seed 0 and validate
+   finite model/optimizer state, reload, CQL alpha/diff, Cal-QL bound, Q values,
+   and offline evaluation. Run a separate 100-episode diagnostic evaluation.
+2. Run WSRL seed 0 for a 50k–100k online sanity horizon. If the prior immediate
+   persistent-zero collapse remains, stop generation-2 automation and report
+   the baseline as blocked; low score alone is not a rerun criterion.
+3. If WSRL is sound, fork the same initializer into Lancet seed 0 and verify
+   equality, residual lifecycle, finite diagnostics, and reload.
+4. Only after both seed-0 branches pass may the seed-wise 5-initializer,
+   WSRL×5, Lancet×5 formal pipeline start. Raw/Centered follow the main
+   comparison and reuse the same generation-2 initializers.
 
 WSRL and Lancet use the same TensorBoard backend and both save final
 checkpoints. Normal monitoring reads only log tails and GPU metadata at an
