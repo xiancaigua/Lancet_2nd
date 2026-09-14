@@ -12,7 +12,7 @@ raises when enabled rather than quietly inventing a surrogate objective.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 import numpy as np
@@ -24,6 +24,7 @@ from torch import nn
 from rl_garden.algorithms.wsrl import WSRL
 from rl_garden.common.optim import make_optimizer
 from rl_garden.networks.mlp import create_mlp
+from rl_garden.observations import ObservationSchema
 
 
 class ResidualQNetworkV1(nn.Module):
@@ -100,13 +101,19 @@ class LancetV1(WSRL):
             return
         obs_space = self.env.single_observation_space
         action_space = self.env.single_action_space
-        if not isinstance(obs_space, spaces.Box) or not isinstance(
-            action_space, spaces.Box
-        ):
-            raise TypeError(
-                "Lancet V1 supports flat Box state/action observations only."
+        if not isinstance(action_space, spaces.Box):
+            raise TypeError("Lancet V1 requires a continuous Box action space.")
+        schema = ObservationSchema.from_space(obs_space)
+        if not schema.has_state or schema.has_images:
+            raise TypeError("Lancet V1 supports state-only observations.")
+        self._lancet_state_keys = schema.state_keys
+        if isinstance(obs_space, spaces.Box):
+            state_dim = int(np.prod(obs_space.shape))
+        else:
+            state_dim = sum(
+                int(np.prod(obs_space.spaces[key].shape))
+                for key in self._lancet_state_keys
             )
-        state_dim = int(np.prod(obs_space.shape))
         action_dim = int(np.prod(action_space.shape))
         self.residual_network = ResidualQNetworkV1(
             state_dim,
@@ -154,21 +161,28 @@ class LancetV1(WSRL):
         if network_state is not None and self.residual_network is not None:
             self.residual_network.load_state_dict(network_state)
 
-    def residual(self, obs: torch.Tensor, actions: torch.Tensor) -> torch.Tensor:
+    def _lancet_state_tensor(self, obs: Any) -> torch.Tensor:
+        if isinstance(obs, torch.Tensor):
+            return obs.reshape(obs.shape[0], -1)
+        if isinstance(obs, Mapping):
+            values = [
+                obs[key].reshape(obs[key].shape[0], -1)
+                for key in self._lancet_state_keys
+            ]
+            return torch.cat(values, dim=-1)
+        raise TypeError(
+            f"Unsupported Lancet V1 observation type: {type(obs).__name__}."
+        )
+
+    def residual(self, obs: Any, actions: torch.Tensor) -> torch.Tensor:
         """Return ``R_phi(s,a)`` or exact zeros when Lancet is disabled."""
         if self.residual_network is None:
             return torch.zeros(
                 (actions.shape[0], 1), device=actions.device, dtype=actions.dtype
             )
-        if not isinstance(obs, torch.Tensor):
-            raise TypeError(
-                "Lancet V1 residual expects flat tensor state observations."
-            )
-        return self.residual_network(obs, actions)
+        return self.residual_network(self._lancet_state_tensor(obs), actions)
 
-    def corrected_q_values(
-        self, obs: torch.Tensor, actions: torch.Tensor
-    ) -> torch.Tensor:
+    def corrected_q_values(self, obs: Any, actions: torch.Tensor) -> torch.Tensor:
         """Return all base ensemble Qs plus the shared residual correction."""
         return self._critic_forward(obs, actions, target=False) + self.residual(
             obs, actions
@@ -223,11 +237,9 @@ class LancetV1(WSRL):
             critic_td_error_abs_mean=td_error.abs().mean(),
         )
 
-    def _actor_loss(self, obs: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def _actor_loss(self, obs: Any) -> tuple[torch.Tensor, torch.Tensor]:
         alpha = self._current_alpha().detach()
-        action, log_prob, actor_features = self._actor_action_log_prob(
-            obs, stop_gradient=self._actor_stop_gradient()
-        )
+        action, log_prob, actor_features = self._actor_action_log_prob(obs)
         critic_features = self.policy.critic_features_for(
             obs, actor_features, stop_gradient=True
         )

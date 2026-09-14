@@ -43,8 +43,8 @@ def _agent(*, use_lancet: bool = True) -> LancetV1:
 
 def _fill(agent: LancetV1, steps: int = 12) -> None:
     for step in range(steps):
-        obs = torch.randn(2, 4)
-        next_obs = torch.randn(2, 4)
+        obs = {"state": torch.randn(2, 4)}
+        next_obs = {"state": torch.randn(2, 4)}
         actions = torch.randn(2, 2).clamp(-1, 1)
         rewards = torch.randn(2)
         dones = torch.ones(2) if step == steps - 1 else torch.zeros(2)
