@@ -1,0 +1,65 @@
+{
+  "fields": {
+    "action": {
+      "match": true,
+      "new": "91c677279f19535c13367a700544058da95518315eb6947fe765c33e4f7e3957",
+      "old": "91c677279f19535c13367a700544058da95518315eb6947fe765c33e4f7e3957"
+    },
+    "episode_boundary": {
+      "match": true,
+      "new": "b7fd5703b668915be9dd5b693f93fa8bf1e65673cf80e5746b103716708d8590",
+      "old": "b7fd5703b668915be9dd5b693f93fa8bf1e65673cf80e5746b103716708d8590"
+    },
+    "mc_return": {
+      "match": true,
+      "new": "c4cac7ca1722d90e8e071385ddbf91f8c1720d8e83ff5370caad5389f8a00e17",
+      "old": "c4cac7ca1722d90e8e071385ddbf91f8c1720d8e83ff5370caad5389f8a00e17"
+    },
+    "next_obs/state": {
+      "match": true,
+      "new": "631547388cc2375c18a6e4a67788176f81250048912e05ca9213eecf81df2a63",
+      "old": "631547388cc2375c18a6e4a67788176f81250048912e05ca9213eecf81df2a63"
+    },
+    "obs/state": {
+      "match": true,
+      "new": "08c0a6e68ab8206261a1dc640e7bc4981abc6b5c7c82a57d61761702f81c8cbb",
+      "old": "08c0a6e68ab8206261a1dc640e7bc4981abc6b5c7c82a57d61761702f81c8cbb"
+    },
+    "reward": {
+      "match": true,
+      "new": "37902a7f71351c15bc570a5bd03b42e6eac2d119a3219bec5fc14be2adcb12e6",
+      "old": "37902a7f71351c15bc570a5bd03b42e6eac2d119a3219bec5fc14be2adcb12e6"
+    },
+    "success": {
+      "match": true,
+      "new": "67905eb31e16bdb809f2cb4092eb72b3e8b69b4af77741a1fd4eeaac1b0e221d",
+      "old": "67905eb31e16bdb809f2cb4092eb72b3e8b69b4af77741a1fd4eeaac1b0e221d"
+    },
+    "termination": {
+      "match": true,
+      "new": "67905eb31e16bdb809f2cb4092eb72b3e8b69b4af77741a1fd4eeaac1b0e221d",
+      "old": "67905eb31e16bdb809f2cb4092eb72b3e8b69b4af77741a1fd4eeaac1b0e221d"
+    },
+    "truncation": {
+      "match": true,
+      "new": "b7fd5703b668915be9dd5b693f93fa8bf1e65673cf80e5746b103716708d8590",
+      "old": "b7fd5703b668915be9dd5b693f93fa8bf1e65673cf80e5746b103716708d8590"
+    }
+  },
+  "raw_dataset_match": true,
+  "raw_dataset_sha256": "c9fec1c1daad97c71d61bd47f4ccc9f74faa855b8a2d2e8107d5378018827e5b",
+  "raw_transition_count": {
+    "new": 1000000,
+    "old": 1000000
+  },
+  "schema_version": 1,
+  "semantic_sha256": {
+    "new": "9f4a4caed9e8eff2a5cbbedf32718eaa24d91c4f985311d18f06c66fc4f8729a",
+    "old": "9f4a4caed9e8eff2a5cbbedf32718eaa24d91c4f985311d18f06c66fc4f8729a"
+  },
+  "status": "PASS",
+  "transformed_transition_count": {
+    "new": 999000,
+    "old": 999000
+  }
+}

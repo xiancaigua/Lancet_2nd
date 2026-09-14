@@ -10,7 +10,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-
 SUPERSEDED = "SUPERSEDED_PRE_UPSTREAM_SYNC"
 
 
@@ -72,10 +71,16 @@ def main() -> int:
                 "superseded_by": job.get("superseded_by"),
                 "archive": str(archive),
                 "metadata": str(metadata_path) if metadata_path.is_file() else None,
-                "formal_commit": metadata.get("formal_algorithm_commit", identity.get("git_commit")),
+                "formal_commit": metadata.get(
+                    "formal_algorithm_commit", identity.get("git_commit")
+                ),
                 "resolved_config_sha256": metadata.get("resolved_config_sha256"),
-                "protocol_sha256": metadata.get("protocol_sha256", identity.get("protocol_sha256")),
-                "dataset_sha256": metadata.get("dataset_sha256", identity.get("dataset_sha256")),
+                "protocol_sha256": metadata.get(
+                    "protocol_sha256", identity.get("protocol_sha256")
+                ),
+                "dataset_sha256": metadata.get(
+                    "dataset_sha256", identity.get("dataset_sha256")
+                ),
                 "checkpoint": str(checkpoint) if checkpoint else None,
                 "checkpoint_sha256": checkpoint_hash,
                 "checkpoint_global_step": summary.get("checkpoint_global_step"),

@@ -121,7 +121,9 @@ def main() -> int:
         )
     else:
         lines.append("All base inputs are resolved-identical.")
-    (OUT / "base_config_parity.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    (OUT / "base_config_parity.md").write_text(
+        "\n".join(lines) + "\n", encoding="utf-8"
+    )
     print(report["status"])
     return 0 if not mismatches else 1
 

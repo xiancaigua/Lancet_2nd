@@ -148,7 +148,9 @@ class Lancet(WSRL):
             raise TypeError("Lancet requires a continuous Box action space.")
         schema = ObservationSchema.from_space(obs_space)
         if not schema.has_state:
-            raise TypeError("Lancet requires at least one canonical state observation key.")
+            raise TypeError(
+                "Lancet requires at least one canonical state observation key."
+            )
         if schema.has_images:
             raise TypeError(
                 "Lancet currently supports state-only observations; its residual "
@@ -255,18 +257,14 @@ class Lancet(WSRL):
         obs_flat = self._repeat_observation(obs, count)
         return obs_flat, local_actions.reshape(batch * count, -1)
 
-    def residual_local(
-        self, obs: Any, local_actions: torch.Tensor
-    ) -> torch.Tensor:
+    def residual_local(self, obs: Any, local_actions: torch.Tensor) -> torch.Tensor:
         batch, count = local_actions.shape[:2]
         obs_flat, action_flat = self._flat_local_inputs(obs, local_actions)
         return self.residual(obs_flat, action_flat).reshape(
             self.n_critics, batch, count, 1
         )
 
-    def _local_actions(
-        self, obs: Any, replay_actions: torch.Tensor
-    ) -> torch.Tensor:
+    def _local_actions(self, obs: Any, replay_actions: torch.Tensor) -> torch.Tensor:
         assert self._local_action_generator is not None
         with torch.no_grad():
             actor_action = self.policy.predict(obs, deterministic=True).detach()

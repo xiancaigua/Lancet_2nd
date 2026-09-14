@@ -3,8 +3,11 @@
 from dataclasses import dataclass
 from typing import Literal
 
+from rl_garden.common.cli_args import (
+    resolve_critic_encoder_config,
+    resolve_obs_groups_config,
+)
 from rl_garden.common.env_args import EnvBackendArgs
-from rl_garden.common.cli_args import resolve_critic_encoder_config, resolve_obs_groups_config
 from rl_garden.training.inspection import construct_agent
 from rl_garden.training.off2on._args import (
     VisionWSRLTrainingArgs,

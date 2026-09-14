@@ -85,6 +85,22 @@ def _changed(before, module) -> bool:
     )
 
 
+def _assert_nested_equal(left, right) -> None:
+    if isinstance(left, torch.Tensor):
+        assert isinstance(right, torch.Tensor)
+        assert torch.equal(left, right)
+    elif isinstance(left, dict):
+        assert set(left) == set(right)
+        for key in left:
+            _assert_nested_equal(left[key], right[key])
+    elif isinstance(left, (list, tuple)):
+        assert len(left) == len(right)
+        for lhs, rhs in zip(left, right):
+            _assert_nested_equal(lhs, rhs)
+    else:
+        assert left == right
+
+
 def test_residual_ensemble_shape_and_exact_zero_initialization():
     network = ResidualEnsemble(4, 2, 3, [8, 8])
     output = network(torch.randn(5, 4), torch.randn(5, 2))
@@ -255,6 +271,65 @@ def test_target_q_is_identical_to_wsrl_and_never_uses_residual():
     assert torch.equal(actual, expected)
 
 
+def test_inactive_one_step_is_exact_wsrl_base_update_and_rng_parity():
+    torch.manual_seed(901)
+    wsrl = WSRL(**_base_kwargs())
+    wsrl_rng = torch.random.get_rng_state().clone()
+    torch.manual_seed(901)
+    agent = _agent()
+    lancet_rng = torch.random.get_rng_state().clone()
+    assert torch.equal(wsrl_rng, lancet_rng)
+    _assert_nested_equal(wsrl.policy.state_dict(), agent.policy.state_dict())
+
+    _fill(agent)
+    batch = agent.replay_buffer.sample(8)
+    wsrl._sample_train_batch = lambda _: batch
+    agent._sample_train_batch = lambda _: batch
+    torch.manual_seed(177)
+    rng = torch.random.get_rng_state().clone()
+    wsrl_metrics = wsrl.train(gradient_steps=1, compute_info=True)
+    torch.random.set_rng_state(rng)
+    lancet_metrics = agent.train(gradient_steps=1, compute_info=True)
+
+    _assert_nested_equal(wsrl.policy.state_dict(), agent.policy.state_dict())
+    _assert_nested_equal(wsrl.q_optimizer.state_dict(), agent.q_optimizer.state_dict())
+    _assert_nested_equal(
+        wsrl.actor_optimizer.state_dict(), agent.actor_optimizer.state_dict()
+    )
+    _assert_nested_equal(
+        wsrl.alpha_optimizer.state_dict(), agent.alpha_optimizer.state_dict()
+    )
+    for key in ("target_q", "critic_loss", "actor_loss", "alpha_loss", "alpha"):
+        assert wsrl_metrics[key] == lancet_metrics[key]
+    assert agent._residual_update_count == 0
+
+
+def test_active_lancet_preserves_base_critic_update_semantics():
+    wsrl = WSRL(**_base_kwargs())
+    agent = _agent()
+    _fill(agent)
+    batch = agent.replay_buffer.sample(8)
+    wsrl._sample_train_batch = lambda _: batch
+    agent._sample_train_batch = lambda _: batch
+    _activate(wsrl)  # type: ignore[arg-type]
+    _activate(agent)
+
+    torch.manual_seed(277)
+    rng = torch.random.get_rng_state().clone()
+    wsrl.train(gradient_steps=1)
+    torch.random.set_rng_state(rng)
+    agent.train(gradient_steps=1)
+
+    _assert_nested_equal(
+        wsrl.policy.critic.state_dict(), agent.policy.critic.state_dict()
+    )
+    _assert_nested_equal(
+        wsrl.policy.critic_target.state_dict(), agent.policy.critic_target.state_dict()
+    )
+    _assert_nested_equal(wsrl.q_optimizer.state_dict(), agent.q_optimizer.state_dict())
+    assert agent._residual_update_count == 1
+
+
 def test_offline_warmup_active_window_and_expiry():
     offline = _agent()
     _fill(offline)
@@ -342,6 +417,35 @@ def test_wsrl_checkpoint_fork_and_lancet_round_trip(tmp_path):
         agent.residual_network.parameters(), restored.residual_network.parameters()
     ):
         assert torch.equal(expected, actual)
+    assert restored._residual_update_count == agent._residual_update_count
+    assert restored._u_ema == agent._u_ema
+    assert torch.equal(
+        restored._local_action_generator.get_state(),
+        agent._local_action_generator.get_state(),
+    )
+
+    # A restored run must take the same next optimization step, including its
+    # Lancet-local perturbation stream, when given the same batch and global RNG.
+    continuation_batch = agent.replay_buffer.sample(8)
+    agent._sample_train_batch = lambda _: continuation_batch
+    restored._sample_train_batch = lambda _: continuation_batch
+    torch_rng = torch.get_rng_state()
+    agent.train(gradient_steps=1)
+    torch.set_rng_state(torch_rng)
+    restored.train(gradient_steps=1)
+    _assert_nested_equal(agent.policy.state_dict(), restored.policy.state_dict())
+    _assert_nested_equal(
+        agent.residual_network.state_dict(), restored.residual_network.state_dict()
+    )
+    _assert_nested_equal(
+        agent.q_optimizer.state_dict(), restored.q_optimizer.state_dict()
+    )
+    _assert_nested_equal(
+        agent.actor_optimizer.state_dict(), restored.actor_optimizer.state_dict()
+    )
+    _assert_nested_equal(
+        agent.residual_optimizer.state_dict(), restored.residual_optimizer.state_dict()
+    )
     assert restored._residual_update_count == agent._residual_update_count
     assert restored._u_ema == agent._u_ema
     assert torch.equal(

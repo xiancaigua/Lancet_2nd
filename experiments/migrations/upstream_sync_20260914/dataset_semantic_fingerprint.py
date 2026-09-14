@@ -101,12 +101,14 @@ def main() -> int:
     payload = {
         "schema_version": 1,
         "label": args.label,
-        "generated_at": datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds"),
+        "generated_at": datetime.now(timezone.utc)
+        .astimezone()
+        .isoformat(timespec="seconds"),
         "dataset_path": str(args.dataset),
         "dataset_size_bytes": args.dataset.stat().st_size,
         "raw_dataset_sha256": file_sha256(args.dataset),
-        "raw_transition_count": int(len(raw["rewards"])),
-        "transformed_transition_count": int(len(transformed["rewards"])),
+        "raw_transition_count": len(raw["rewards"]),
+        "transformed_transition_count": len(transformed["rewards"]),
         "prefix_count": n,
         "transform": {
             "implementation": "_official_calql_antmaze_dataset",
@@ -121,7 +123,9 @@ def main() -> int:
         "semantic_sha256": semantic_digest.hexdigest(),
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    args.output.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     print(args.output)
     return 0
 
