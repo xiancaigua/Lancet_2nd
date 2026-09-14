@@ -30,12 +30,14 @@ this algorithm does not know or care that the env is chunked; it only knows
 """
 from __future__ import annotations
 
+import dataclasses
 import math
 from typing import Any, Literal, Optional, Sequence
 
 import torch
 from gymnasium import spaces
 
+from rl_garden.algorithms._observation import EncoderSharing
 from rl_garden.algorithms.on_policy import OnPolicyAlgorithm
 from rl_garden.buffers.diffusion_chain_buffer import DiffusionChainBuffer
 from rl_garden.buffers.rollout_buffer import RolloutBuffer
@@ -43,7 +45,9 @@ from rl_garden.common.checkpoint import load_checkpoint_file
 from rl_garden.common.logger import Logger
 from rl_garden.common.obs_utils import flatten_leading_dims, index_obs
 from rl_garden.common.optim import ScheduleType, make_lr_scheduler, make_optimizer
+from rl_garden.encoders.config import EncoderConfig
 from rl_garden.networks import Activation, KernelInit
+from rl_garden.observations import ObsGroups
 from rl_garden.policies.dppo_policy import DPPOPolicy
 
 
@@ -156,6 +160,20 @@ class DPPOCore:
             "ft_denoising_steps": self.ft_denoising_steps,
             "actor_mlp_dims": self.actor_mlp_dims,
             "critic_mlp_dims": self.critic_mlp_dims,
+            "encoder_sharing": self.encoder_sharing,
+            "encoder_sharing_origin": self.encoder_sharing_origin,
+            "encoder_config": (
+                dataclasses.asdict(self.encoder_config) if self.encoder_config is not None else None
+            ),
+            "obs_groups": (
+                dataclasses.asdict(self.obs_groups) if self.obs_groups is not None else None
+            ),
+            "critic_encoder_config": (
+                dataclasses.asdict(self.critic_encoder_config)
+                if self.critic_encoder_config is not None
+                else None
+            ),
+            "image_augmentation_seed": self._image_augmentation_seed,
         }
 
     def _extra_checkpoint_state(self) -> dict[str, Any]:
@@ -224,6 +242,11 @@ class DPPO(DPPOCore, OnPolicyAlgorithm):
         vf_coef: float = 0.5,
         target_kl: Optional[float] = 1.0,
         reward_horizon: Optional[int] = None,
+        encoder_config: Optional[EncoderConfig] = None,
+        obs_groups: Optional[ObsGroups] = None,
+        critic_encoder_config: Optional[EncoderConfig] = None,
+        encoder_sharing: Optional[EncoderSharing] = None,
+        image_augmentation_seed: Optional[int] = None,
         seed: int = 1,
         device: str | torch.device = "auto",
         logger: Optional[Logger] = None,
@@ -236,11 +259,11 @@ class DPPO(DPPOCore, OnPolicyAlgorithm):
         checkpoint_freq: int = 0,
         save_final_checkpoint: bool = True,
     ) -> None:
-        obs_space = env.single_observation_space
-        if not isinstance(obs_space, spaces.Box):
-            raise TypeError(
-                f"DPPO is state-only (Box observations); got {type(obs_space)}."
-            )
+        self.encoder_sharing = encoder_sharing
+        self.encoder_config = encoder_config
+        self.obs_groups = obs_groups
+        self.critic_encoder_config = critic_encoder_config
+        self._image_augmentation_seed = image_augmentation_seed
         super().__init__(
             env=env,
             eval_env=eval_env,
@@ -312,6 +335,22 @@ class DPPO(DPPOCore, OnPolicyAlgorithm):
         self._setup_model()
         if bc_checkpoint is not None:
             checkpoint = load_checkpoint_file(bc_checkpoint, map_location=self.device)
+            # Every DiffusionBC checkpoint's recorded observation_space is
+            # Dict now (boundary normalization always normalizes a bare Box
+            # env into Dict({"state": Box})), so "type == Dict" alone no
+            # longer distinguishes vision from state-only -- check the key
+            # set instead: DPPOPolicy's actor is
+            # state-only, so any key other than "state" (an rgb_<cam>/
+            # depth_<cam> image key) means this checkpoint was vision-trained.
+            ckpt_obs_space = checkpoint["metadata"]["observation_space"]
+            ckpt_obs_keys = set(ckpt_obs_space.get("spaces", {}).keys())
+            if ckpt_obs_space.get("type") == "Dict" and ckpt_obs_keys != {"state"}:
+                raise ValueError(
+                    "--bc_checkpoint was trained with Dict (vision) observations "
+                    f"(its recorded observation_space keys are {sorted(ckpt_obs_keys)}, "
+                    "not just 'state'); DPPO's --bc_checkpoint path requires a "
+                    "state-only DiffusionBC checkpoint."
+                )
             ema_net_state_dict = checkpoint["state"]["extra"]["ema_net_state_dict"]
             self.policy.load_actor_weights(ema_net_state_dict)
 
@@ -323,9 +362,13 @@ class DPPO(DPPOCore, OnPolicyAlgorithm):
             shape=self.env.single_action_space.shape[1:],
             dtype=self.env.single_action_space.dtype,
         )
+        extractor_kwargs = self._policy_extractor_kwargs(
+            obs_space, augmentation_seed=self._image_augmentation_seed
+        )
         self.policy = DPPOPolicy(
             observation_space=obs_space,
             action_space=raw_action_space,
+            **extractor_kwargs,
             horizon_steps=self.horizon_steps,
             act_steps=self.act_steps,
             denoising_steps=self.denoising_steps,
@@ -346,13 +389,13 @@ class DPPO(DPPOCore, OnPolicyAlgorithm):
         ).to(self.device)
 
         self.actor_optimizer = make_optimizer(
-            list(self.policy.actor_ft.parameters()),
+            list(self.policy.actor_parameters()),
             lr=self.actor_lr,
             weight_decay=self.weight_decay,
             use_adamw=True,
         )
         self.critic_optimizer = make_optimizer(
-            list(self.policy.critic.parameters()),
+            list(self.policy.critic_and_encoder_parameters()),
             lr=self.critic_lr,
             weight_decay=self.weight_decay,
             use_adamw=True,
@@ -446,6 +489,7 @@ class DPPO(DPPOCore, OnPolicyAlgorithm):
 
                 obs_b = index_obs(obs_flat, batch_inds)
                 cond_b = self.policy._cond(obs_b)
+                critic_cond_b = self.policy._critic_cond(obs_b)
                 chains_prev_b = chains_flat[batch_inds, denoising_inds]
                 chains_next_b = chains_flat[batch_inds, denoising_inds + 1]
                 returns_b = returns_flat[batch_inds]
@@ -455,6 +499,7 @@ class DPPO(DPPOCore, OnPolicyAlgorithm):
 
                 loss, info = self._dppo_loss(
                     cond_b,
+                    critic_cond_b,
                     chains_prev_b,
                     chains_next_b,
                     denoising_inds,
@@ -470,7 +515,7 @@ class DPPO(DPPOCore, OnPolicyAlgorithm):
                 if train_actor:
                     if self.grad_clip_norm is not None:
                         torch.nn.utils.clip_grad_norm_(
-                            self.policy.actor_ft.parameters(), self.grad_clip_norm
+                            self.policy.actor_parameters(), self.grad_clip_norm
                         )
                     self.actor_optimizer.step()
                 self.critic_optimizer.step()
@@ -501,6 +546,7 @@ class DPPO(DPPOCore, OnPolicyAlgorithm):
     def _dppo_loss(
         self,
         cond_b: dict,
+        critic_cond_b: dict,
         chains_prev_b: torch.Tensor,
         chains_next_b: torch.Tensor,
         denoising_inds_b: torch.Tensor,
@@ -509,8 +555,22 @@ class DPPO(DPPOCore, OnPolicyAlgorithm):
         advantages_b: torch.Tensor,
         logprobs_b: torch.Tensor,
     ) -> tuple[torch.Tensor, dict[str, float]]:
+        # Gradient isolation: critic_cond_b's features are grad-enabled (the
+        # critic loss below, `self.policy.critic(critic_cond_b["state"])`,
+        # trains policy.critic_extractor). The actor's log-prob path
+        # must not also backprop into a shared encoder under
+        # encoder_sharing="shared_critic_grad" (see
+        # BasePolicy.actor_features_detached), or the PPO policy loss would
+        # additionally train it every step -- detach the copy fed to the
+        # actor in that case rather than re-running the (possibly image)
+        # encoder a second time.
+        cond_actor = (
+            {k: v.detach() for k, v in cond_b.items()}
+            if self.policy.actor_features_detached
+            else cond_b
+        )
         newlogprobs = self.policy.get_logprobs_subsample(
-            cond_b, chains_prev_b, chains_next_b, denoising_inds_b
+            cond_actor, chains_prev_b, chains_next_b, denoising_inds_b
         )
         newlogprobs = newlogprobs.clamp(min=-5, max=2)
         oldlogprobs = logprobs_b.clamp(min=-5, max=2)
@@ -548,7 +608,7 @@ class DPPO(DPPOCore, OnPolicyAlgorithm):
         pg_loss2 = -advantages_b * torch.clamp(ratio, 1 - clip_coef, 1 + clip_coef)
         pg_loss = torch.max(pg_loss1, pg_loss2).mean()
 
-        newvalues = self.policy.critic(cond_b["state"]).view(-1)
+        newvalues = self.policy.critic(critic_cond_b["state"]).view(-1)
         if self.clip_vloss_coef is not None:
             v_loss_unclipped = (newvalues - returns_b) ** 2
             v_clipped = values_b + torch.clamp(

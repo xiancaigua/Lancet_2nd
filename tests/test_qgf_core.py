@@ -7,11 +7,33 @@ from gymnasium import spaces
 
 from rl_garden.algorithms import OfflineEnvSpec
 from rl_garden.algorithms.qgf import QGF
+from rl_garden.encoders.config import EncoderConfig
+
+# Small + fast: "gap" pooling (unlike the default "flatten") tolerates tiny
+# images without PlainConv's flatten-layer size mismatch. Mirrors
+# tests/test_fql_core.py's own vision-test encoder config.
+_TEST_IMAGE_SIZE = 16
+_test_encoder_config = EncoderConfig(features_dim=16, plain_conv_pooling="gap")
 
 
 def _state_env(num_envs: int = 1) -> OfflineEnvSpec:
     return OfflineEnvSpec(
         spaces.Box(low=-1.0, high=1.0, shape=(6,), dtype=np.float32),
+        spaces.Box(low=-1.0, high=1.0, shape=(3,), dtype=np.float32),
+        num_envs=num_envs,
+    )
+
+
+def _vision_env(num_envs: int = 1) -> OfflineEnvSpec:
+    return OfflineEnvSpec(
+        spaces.Dict(
+            {
+                "rgb_cam": spaces.Box(
+                    low=0, high=255, shape=(_TEST_IMAGE_SIZE, _TEST_IMAGE_SIZE, 3), dtype=np.uint8
+                ),
+                "state": spaces.Box(low=-1.0, high=1.0, shape=(6,), dtype=np.float32),
+            }
+        ),
         spaces.Box(low=-1.0, high=1.0, shape=(3,), dtype=np.float32),
         num_envs=num_envs,
     )
@@ -32,10 +54,14 @@ def _make_agent(**kwargs) -> QGF:
 
 
 def _fill(agent: QGF, steps: int = 64) -> None:
+    # env.single_observation_space is Dict({"state": Box}) -- OfflineEnvSpec's
+    # bare Box is boundary-normalized by BaseAlgorithm.__init__ (see
+    # rl_garden.envs.wrappers.VectorizedDictStateWrapper).
     env = agent.env
+    state_shape = env.single_observation_space["state"].shape
     for _ in range(steps):
-        obs = torch.randn(env.num_envs, *env.single_observation_space.shape)
-        next_obs = torch.randn_like(obs)
+        obs = {"state": torch.randn(env.num_envs, *state_shape)}
+        next_obs = {"state": torch.randn_like(obs["state"])}
         actions = torch.rand(env.num_envs, *env.single_action_space.shape) * 2 - 1
         rewards = torch.randn(env.num_envs)
         dones = torch.zeros(env.num_envs)
@@ -48,7 +74,7 @@ def test_rejects_unsupported_observation_space():
         spaces.Box(low=-1.0, high=1.0, shape=(3,), dtype=np.float32),
         num_envs=1,
     )
-    with pytest.raises(TypeError, match="Box"):
+    with pytest.raises(ValueError, match="Box"):
         QGF(env=unsupported, buffer_device="cpu", device="cpu")
 
 
@@ -59,6 +85,46 @@ def test_gradient_step_produces_finite_losses():
     for key in ("critic_loss", "value_loss", "bc_loss"):
         assert key in metrics
         assert np.isfinite(metrics[key]), (key, metrics[key])
+
+
+def test_vision_smoke():
+    """Dict/RGBD obs via CombinedExtractor + ChunkedReplayBuffer -- the
+    milestone-3 vision path. Mirrors tests/test_fql_core.py's own vision
+    smoke test shape."""
+    agent = _make_agent(env=_vision_env(), encoder_config=_test_encoder_config)
+    env = agent.env
+    obs_space = env.single_observation_space
+    img_shape = (_TEST_IMAGE_SIZE, _TEST_IMAGE_SIZE, 3)
+    for _ in range(64):
+        obs = {
+            "rgb_cam": torch.randint(0, 256, (env.num_envs, *img_shape), dtype=torch.uint8),
+            "state": torch.randn(env.num_envs, *obs_space["state"].shape),
+        }
+        next_obs = {
+            "rgb_cam": torch.randint(0, 256, (env.num_envs, *img_shape), dtype=torch.uint8),
+            "state": torch.randn(env.num_envs, *obs_space["state"].shape),
+        }
+        actions = torch.rand(env.num_envs, *env.single_action_space.shape) * 2 - 1
+        rewards = torch.randn(env.num_envs)
+        dones = torch.zeros(env.num_envs)
+        agent.replay_buffer.add(obs, next_obs, actions, rewards, dones)
+
+    metrics = agent.train(1, compute_info=True)
+    for key in ("critic_loss", "value_loss", "bc_loss"):
+        assert key in metrics
+        assert np.isfinite(metrics[key]), (key, metrics[key])
+
+    obs = {
+        "rgb_cam": torch.randint(
+            0, 256, (1, _TEST_IMAGE_SIZE, _TEST_IMAGE_SIZE, 3), dtype=torch.uint8
+        ),
+        "state": torch.randn(1, 6),
+    }
+    with torch.no_grad():
+        action = agent.policy.predict(obs)
+    assert action.shape == (1, 3)
+    assert torch.all(action >= -1.0 - 1e-4)
+    assert torch.all(action <= 1.0 + 1e-4)
 
 
 def test_all_networks_update_every_step():
@@ -96,7 +162,7 @@ def test_q_agg_min_is_default_and_not_silently_ignored():
 def test_predict_in_bounds_for_every_sampling_mode():
     for mode in ("guided", "grad_step", "best_of_n"):
         agent = _make_agent(sampling_mode=mode, actor_num_samples=4)
-        obs = torch.randn(2, *agent.env.single_observation_space.shape)
+        obs = {"state": torch.randn(2, *agent.env.single_observation_space["state"].shape)}
         action = agent.policy.predict(obs)
         assert action.shape == (2, 3)
         assert torch.all(action >= agent.policy.action_low)
@@ -109,7 +175,7 @@ def test_zero_guidance_weight_reduces_to_plain_bc_denoise():
     for the guided-sampling loop."""
     agent = _make_agent(sampling_mode="guided")
     agent.policy.guidance_weight = 0.0
-    obs = torch.randn(4, *agent.env.single_observation_space.shape)
+    obs = {"state": torch.randn(4, *agent.env.single_observation_space["state"].shape)}
 
     torch.manual_seed(0)
     guided_action = agent.policy.predict(obs)
@@ -129,7 +195,7 @@ def test_guided_predict_leaves_no_grad_on_any_network_parameter():
     never accumulates into critic/value/actor .grad and silently corrupts a
     later training step."""
     agent = _make_agent(sampling_mode="guided")
-    obs = torch.randn(4, *agent.env.single_observation_space.shape)
+    obs = {"state": torch.randn(4, *agent.env.single_observation_space["state"].shape)}
     agent.policy.predict(obs)
 
     for p in agent.policy.parameters():
@@ -150,6 +216,43 @@ def test_checkpoint_round_trip():
         agent.save(path, include_replay_buffer=False)
 
         loaded = _make_agent()
+        loaded.load(path, load_replay_buffer=False)
+
+    for key, value in agent.policy.state_dict().items():
+        assert torch.equal(value, loaded.policy.state_dict()[key]), key
+
+
+def test_checkpoint_round_trip_with_encoder_config():
+    """Vision env + a non-default encoder_config: exercises the
+    dataclasses.asdict(...) branch of _checkpoint_metadata (encoder_config/
+    obs_groups), not just the None default."""
+    import os
+    import tempfile
+
+    agent = _make_agent(env=_vision_env(), encoder_config=_test_encoder_config)
+    env = agent.env
+    obs_space = env.single_observation_space
+    img_shape = (_TEST_IMAGE_SIZE, _TEST_IMAGE_SIZE, 3)
+    for _ in range(8):
+        obs = {
+            "rgb_cam": torch.randint(0, 256, (env.num_envs, *img_shape), dtype=torch.uint8),
+            "state": torch.randn(env.num_envs, *obs_space["state"].shape),
+        }
+        next_obs = {
+            "rgb_cam": torch.randint(0, 256, (env.num_envs, *img_shape), dtype=torch.uint8),
+            "state": torch.randn(env.num_envs, *obs_space["state"].shape),
+        }
+        actions = torch.rand(env.num_envs, *env.single_action_space.shape) * 2 - 1
+        rewards = torch.randn(env.num_envs)
+        dones = torch.zeros(env.num_envs)
+        agent.replay_buffer.add(obs, next_obs, actions, rewards, dones)
+    agent.train(1)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        path = os.path.join(tmpdir, "ckpt.pt")
+        agent.save(path, include_replay_buffer=False)
+
+        loaded = _make_agent(env=_vision_env(), encoder_config=_test_encoder_config)
         loaded.load(path, load_replay_buffer=False)
 
     for key, value in agent.policy.state_dict().items():
@@ -195,7 +298,7 @@ def test_cuda_smoke_all_sampling_modes_and_horizons(horizon_length, sampling_mod
     # (optimizer.step() doesn't clear it) -- zero explicitly so predict()'s
     # effect on .grad can be isolated and checked below.
     agent.policy.zero_grad(set_to_none=True)
-    obs = torch.randn(4, 6, device="cuda")
+    obs = {"state": torch.randn(4, 6, device="cuda")}
     action = agent.policy.predict(obs)
     assert action.shape == (4, 3 * horizon_length)
     assert torch.all(action >= agent.policy.action_low)
@@ -211,7 +314,7 @@ def test_cuda_smoke_all_sampling_modes_and_horizons(horizon_length, sampling_mod
 
 def test_bptt_predict_in_bounds_and_finite():
     agent = _make_agent(sampling_mode="bptt")
-    obs = torch.randn(4, 6)
+    obs = {"state": torch.randn(4, 6)}
     action = agent.policy.predict(obs)
     assert action.shape == (4, 3)
     assert torch.isfinite(action).all()
@@ -226,7 +329,7 @@ def test_bptt_grad_matches_manual_autograd():
     backprop-through-time mechanism, mirroring the QAM adjoint-matching
     cross-check pattern."""
     agent = _make_agent(sampling_mode="bptt", denoise_steps=4)
-    features = agent.policy.extract_features(torch.randn(4, 6))
+    features = agent.policy.extract_features({"state": torch.randn(4, 6)})
     a_t = torch.randn(4, 3)
     start_step = 1
 
@@ -250,7 +353,7 @@ def test_bptt_gradient_genuinely_differs_from_one_euler_step_approx():
     generally differ -- confirms BPTT is doing genuinely more than the
     existing approximation, not silently collapsing to it."""
     agent = _make_agent(sampling_mode="bptt", denoise_steps=4)
-    features = agent.policy.extract_features(torch.randn(8, 6))
+    features = agent.policy.extract_features({"state": torch.randn(8, 6)})
     a = torch.randn(8, 3)
     start_step = 0
 
@@ -268,7 +371,7 @@ def test_bptt_gradient_genuinely_differs_from_one_euler_step_approx():
 
 def test_bptt_leaves_no_grad_on_any_parameter():
     agent = _make_agent(sampling_mode="bptt")
-    agent.policy.predict(torch.randn(4, 6))
+    agent.policy.predict({"state": torch.randn(4, 6)})
     for p in agent.policy.parameters():
         assert p.grad is None
 
@@ -298,7 +401,7 @@ def test_robust_q_builds_robust_critic_only_when_selected():
 
 def test_robust_q_predict_in_bounds_and_finite():
     agent = _make_agent(sampling_mode="robust_q")
-    obs = torch.randn(4, 6)
+    obs = {"state": torch.randn(4, 6)}
     action = agent.policy.predict(obs)
     assert action.shape == (4, 3)
     assert torch.isfinite(action).all()
@@ -351,7 +454,7 @@ def test_robust_q_leaves_no_grad_on_any_parameter():
     _fill(agent)
     agent.train(1)
     agent.policy.zero_grad(set_to_none=True)
-    agent.policy.predict(torch.randn(4, 6))
+    agent.policy.predict({"state": torch.randn(4, 6)})
     for p in agent.policy.parameters():
         assert p.grad is None
 

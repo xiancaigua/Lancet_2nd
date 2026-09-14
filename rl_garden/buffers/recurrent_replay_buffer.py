@@ -26,8 +26,8 @@ from typing import Optional, Union
 import torch
 from gymnasium import spaces
 
-from rl_garden.buffers._checkpointed_sequence_buffer import _CheckpointedSequenceReplayBuffer
-from rl_garden.buffers.dict_buffer import _tree_to_device
+from rl_garden.buffers.replay_buffer import _tree_to_device
+from rl_garden.buffers.sequence_replay_buffer import SequenceReplayBuffer
 from rl_garden.common.types import Obs
 
 # Local, intentionally-duplicated type alias mirroring
@@ -42,8 +42,8 @@ class RecurrentReplayBufferSample:
     obs: Obs                                   # (window_len, B, *obs_shape)
     # Always None -- this buffer has no separate next_obs concept (the window
     # itself covers "next" positions internally); present only so
-    # SACCore.train()'s unconditional features_extractor.prepare_batch(obs,
-    # next_obs) call has something to pass without a special case there.
+    # SACCore.train()'s unconditional policy.prepare_batch_all(obs, next_obs)
+    # call has something to pass without a special case there.
     next_obs: Optional[Obs]
     actions: torch.Tensor                       # (learning_len, B, act_dim)
     rewards: torch.Tensor                       # (learning_len, B) -- pre-accumulated n-step
@@ -55,15 +55,16 @@ class RecurrentReplayBufferSample:
     is_weights: torch.Tensor                    # (B,)
 
 
-class RecurrentReplayBuffer(_CheckpointedSequenceReplayBuffer):
-    """One class for both Box and Dict observations (unlike the Tensor/Dict
-    n-step buffer pair) -- the sum-tree/checkpoint/burn-in machinery here is
-    already the novel bulk of this file; duplicating it across a second class
-    would double the review surface for no behavioral benefit."""
+class RecurrentReplayBuffer(SequenceReplayBuffer):
+    """One class handling every observation schema (state-only or
+    Dict+image) -- obs is always a Dict (a bare Box env is normalized once
+    at the algorithm boundary), so there is no second observation-shape
+    variant to split out; the sum-tree/checkpoint/burn-in machinery here is
+    already the novel bulk of this file."""
 
     def __init__(
         self,
-        observation_space: spaces.Box | spaces.Dict,
+        observation_space: spaces.Dict,
         action_space: spaces.Box,
         num_envs: int,
         buffer_size: int,
@@ -92,6 +93,8 @@ class RecurrentReplayBuffer(_CheckpointedSequenceReplayBuffer):
             action_space,
             num_envs,
             buffer_size,
+            cross_episode=True,
+            priority=True,
             burn_in_len=burn_in_len,
             learning_len=learning_len,
             forward_len=forward_len,

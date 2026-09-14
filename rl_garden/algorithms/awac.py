@@ -5,8 +5,11 @@ the loss/network/optimizer logic shared by the pure offline ``AWAC`` (built
 on ``OfflineRLAlgorithm``) and the rollout-capable
 ``_AWACRolloutTrainingShell`` (built on ``OffPolicyAlgorithm``, backing
 ``Off2OnAWAC``) -- mirrors ``IQLCore``/``IQL``/``_IQLRolloutTrainingShell`` in
-``rl_garden/algorithms/iql.py``. Box observations only, matching CORL's D4RL
-MuJoCo scope.
+``rl_garden/algorithms/iql.py``. State observations only (no images;
+``_setup_model`` rejects ``schema.has_images``), matching CORL's D4RL MuJoCo
+scope -- ``state_<name>`` keys and an asymmetric ``obs_groups``/
+``critic_encoder_config``/``encoder_sharing="separate"`` critic are
+supported (see ``AWACPolicy``).
 
 Two deliberate deviations from every other actor-critic algorithm in
 rl-garden, both faithful to CORL's actual numerics (not bugs):
@@ -20,22 +23,23 @@ rl-garden, both faithful to CORL's actual numerics (not bugs):
 """
 from __future__ import annotations
 
+import dataclasses
 from typing import Any, Literal, Optional, Sequence
 
 import torch
-from gymnasium import spaces
 
+from rl_garden.algorithms._observation import EncoderSharing
 from rl_garden.algorithms.off2on import Off2OnReplayMixin
 from rl_garden.algorithms.off_policy import OffPolicyAlgorithm
 from rl_garden.algorithms.offline import OfflineEnvSpec, OfflineRLAlgorithm
-from rl_garden.buffers.tensor_buffer import TensorReplayBuffer
+from rl_garden.buffers.replay_buffer import ReplayBuffer
 from rl_garden.common.logger import Logger
 from rl_garden.common.optim import ScheduleType, make_lr_scheduler, make_optimizer
 from rl_garden.common.utils import polyak_update
-from rl_garden.encoders.base import BaseFeaturesExtractor
-from rl_garden.encoders.flatten import FlattenExtractor
+from rl_garden.encoders.config import EncoderConfig
 from rl_garden.networks import KernelInit
 from rl_garden.networks.actor_critic import BackboneType
+from rl_garden.observations import ObservationContractError, ObsGroups
 from rl_garden.policies.awac_policy import AWACPolicy
 
 
@@ -69,6 +73,11 @@ class AWACCore:
         kernel_init: Optional[KernelInit] = None,
         backbone_type: BackboneType = "mlp",
         std_parameterization: Literal["exp", "uniform"] = "exp",
+        encoder_config: Optional[EncoderConfig] = None,
+        obs_groups: Optional[ObsGroups] = None,
+        critic_encoder_config: Optional[EncoderConfig] = None,
+        encoder_sharing: Optional[EncoderSharing] = None,
+        image_augmentation_seed: Optional[int] = None,
     ) -> None:
         if not (0.0 < tau <= 1.0):
             raise ValueError(f"tau must be in (0, 1], got {tau}.")
@@ -107,6 +116,11 @@ class AWACCore:
         self.kernel_init = kernel_init
         self.backbone_type = backbone_type
         self.std_parameterization = std_parameterization
+        self.encoder_config = encoder_config
+        self.obs_groups = obs_groups
+        self.critic_encoder_config = critic_encoder_config
+        self.encoder_sharing = encoder_sharing
+        self._image_augmentation_seed = image_augmentation_seed
 
     def _optimizer_names(self) -> tuple[str, ...]:
         return ("critic_optimizer", "actor_optimizer")
@@ -128,6 +142,20 @@ class AWACCore:
             "exp_adv_max": self.exp_adv_max,
             "net_arch": self.net_arch,
             "n_critics": self.n_critics,
+            "encoder_sharing": self.encoder_sharing,
+            "encoder_sharing_origin": self.encoder_sharing_origin,
+            "encoder_config": (
+                dataclasses.asdict(self.encoder_config) if self.encoder_config is not None else None
+            ),
+            "obs_groups": (
+                dataclasses.asdict(self.obs_groups) if self.obs_groups is not None else None
+            ),
+            "critic_encoder_config": (
+                dataclasses.asdict(self.critic_encoder_config)
+                if self.critic_encoder_config is not None
+                else None
+            ),
+            "image_augmentation_seed": self._image_augmentation_seed,
         }
 
     def _extra_checkpoint_state(self) -> dict[str, Any]:
@@ -145,26 +173,10 @@ class AWACCore:
             if sched is not None and sched_state is not None:
                 sched.load_state_dict(sched_state)
 
-    def _default_features_extractor_class(self) -> type[BaseFeaturesExtractor]:
-        obs_space = self.env.single_observation_space
-        if isinstance(obs_space, spaces.Box):
-            return FlattenExtractor
-        raise TypeError(
-            "AWAC only supports Box observation spaces, got " + str(type(obs_space))
-        )
-
-    def _build_features_extractor(self) -> BaseFeaturesExtractor:
-        cls = self._default_features_extractor_class()
-        return cls(observation_space=self.env.single_observation_space)
-
-    def _build_replay_buffer(self) -> TensorReplayBuffer:
-        obs_space = self.env.single_observation_space
-        if not isinstance(obs_space, spaces.Box):
-            raise TypeError(
-                "AWAC only supports Box observation spaces, got " + str(type(obs_space))
-            )
-        return TensorReplayBuffer(
-            observation_space=obs_space,
+    def _build_replay_buffer(self):
+        # obs_space is always Dict (boundary normalization is unconditional).
+        return ReplayBuffer(
+            observation_space=self.env.single_observation_space,
             action_space=self.env.single_action_space,
             num_envs=self.num_envs,
             buffer_size=self.buffer_size,
@@ -173,11 +185,18 @@ class AWACCore:
         )
 
     def _setup_model(self) -> None:
-        features_extractor = self._build_features_extractor()
+        extractor_kwargs = self._policy_extractor_kwargs(
+            self.env.single_observation_space,
+            augmentation_seed=self._image_augmentation_seed,
+        )
+        if self.observation_encoders.schema.has_images:
+            raise ObservationContractError(
+                "AWAC only supports state observations (no images); got image "
+                f"keys {self.observation_encoders.schema.image_keys}."
+            )
         self.policy = AWACPolicy(
             observation_space=self.env.single_observation_space,
             action_space=self.env.single_action_space,
-            features_extractor=features_extractor,
             net_arch=self.net_arch,
             n_critics=self.n_critics,
             actor_use_layer_norm=self.actor_use_layer_norm,
@@ -190,6 +209,7 @@ class AWACCore:
             kernel_init=self.kernel_init,
             backbone_type=self.backbone_type,
             std_parameterization=self.std_parameterization,
+            **extractor_kwargs,
         ).to(self.device)
 
         self.critic_optimizer = make_optimizer(
@@ -218,8 +238,31 @@ class AWACCore:
 
     def fit_obs_normalizer(self) -> None:
         buf = self.replay_buffer
-        obs = buf.obs[: buf.size].reshape(-1, buf.obs.shape[-1]).to(self.device)
-        self.policy.fit_obs_normalizer(obs)
+        # buf.obs is always a DictArray (boundary normalization is
+        # unconditional); hand every stored state key to both extractors --
+        # each's own FlattenExtractor picks out only the key(s) it was built
+        # from (see FlattenExtractor._flatten_obs), so this stays correct
+        # even when obs_groups makes actor/critic state keys asymmetric.
+        obs = {
+            key: buf.obs[key][: buf.size].reshape(-1, *buf.obs[key].shape[2:]).to(self.device)
+            for key in buf.obs.keys()
+        }
+        with torch.no_grad():
+            self.policy.fit_obs_normalizer(self.policy.actor_extractor(obs))
+            # Under encoder_sharing="separate" AWACPolicy also owns a second,
+            # suffix="critic" obs-normalizer buffer pair sized to
+            # critic_extractor's own output features (see
+            # rl_garden/policies/awac_policy.py's docstring) -- fit it too,
+            # or it stays at its __init__-time zeros/ones default (a no-op
+            # normalization) forever. Dedup by identity
+            # (BasePolicy.update_normalizer's convention).
+            if (
+                self.policy.critic_extractor is not None
+                and self.policy.critic_extractor is not self.policy.actor_extractor
+            ):
+                self.policy.fit_obs_normalizer(
+                    self.policy.critic_extractor(obs), suffix="critic"
+                )
 
     def _sample_train_batch(self, batch_size: int):
         if self.offline_sampling == "with_replace":
@@ -244,44 +287,52 @@ class AWACCore:
             if sched is not None:
                 sched.step()
 
-    def _compute_critic_loss(self, data) -> tuple[torch.Tensor, torch.Tensor]:
-        obs_features = self.policy.extract_features(data.obs, stop_gradient=False)
+    def _compute_critic_loss(self, data) -> torch.Tensor:
+        critic_features = self.policy.extract_critic_features(data.obs)
         with torch.no_grad():
-            next_features = self.policy.extract_features(data.next_obs)
+            next_critic_features = self.policy.extract_critic_features(data.next_obs)
+            next_actor_features = self.policy.extract_actor_features(data.next_obs)
             # Faithful to CORL: next_action is sampled from the CURRENT actor,
             # not a target actor (AWAC has no actor target -- see module docstring).
-            next_action, _ = self.policy.actor.action_log_prob(next_features)
+            next_action, _ = self.policy.actor.action_log_prob(next_actor_features)
             q_next = self.policy.q_values_all(
-                next_features, next_action, target=True
+                next_critic_features, next_action, target=True
             ).min(dim=0).values
             target_q = (
                 data.rewards.unsqueeze(-1)
                 + self.gamma * (1.0 - data.dones.unsqueeze(-1)) * q_next
             )
-        q_all = self.policy.q_values_all(obs_features, data.actions, target=False)
+        q_all = self.policy.q_values_all(critic_features, data.actions, target=False)
         expanded_target = target_q.unsqueeze(0).expand_as(q_all)
         critic_loss = sum(
             torch.nn.functional.mse_loss(q_pred, q_target)
             for q_pred, q_target in zip(q_all, expanded_target)
         )
-        return critic_loss, obs_features
+        return critic_loss
 
-    def _compute_actor_loss(self, data, obs_features: torch.Tensor) -> torch.Tensor:
-        features_detached = obs_features.detach()
+    def _compute_actor_loss(self, data) -> torch.Tensor:
+        # actor_features carries the encoder_sharing-governed gradient
+        # (BasePolicy.extract_actor_features): detached under the default
+        # "shared_critic_grad" sharing (numerically identical to the old
+        # unconditional features.detach()), full gradient to actor_extractor
+        # under "separate" (actor_extractor is then actor-loss-exclusive --
+        # see AWACPolicy.actor_parameters).
+        actor_features = self.policy.extract_actor_features(data.obs)
         with torch.no_grad():
-            pi_action, _ = self.policy.actor.action_log_prob(features_detached)
+            critic_features = self.policy.extract_critic_features(data.obs)
+            pi_action, _ = self.policy.actor.action_log_prob(actor_features)
             v = self.policy.q_values_all(
-                features_detached, pi_action, target=False
+                critic_features, pi_action, target=False
             ).min(dim=0).values
             q = self.policy.q_values_all(
-                features_detached, data.actions, target=False
+                critic_features, data.actions, target=False
             ).min(dim=0).values
             adv = q - v
             weights = torch.clamp_max(
                 torch.exp(adv / self.awac_lambda), self.exp_adv_max
             )
         log_prob = self.policy.actor.evaluate_action_log_prob(
-            features_detached, data.actions
+            actor_features, data.actions
         )
         return -(log_prob * weights).mean()
 
@@ -294,7 +345,7 @@ class AWACCore:
             self._global_update += 1
             data = self._sample_train_batch(self.batch_size)
 
-            critic_loss, obs_features = self._compute_critic_loss(data)
+            critic_loss = self._compute_critic_loss(data)
             self.critic_optimizer.zero_grad(set_to_none=True)
             critic_loss.backward()
             self._clip_grad_norm(self.policy.critic_and_encoder_parameters())
@@ -302,7 +353,7 @@ class AWACCore:
             if self._lr_schedulers[0] is not None:
                 self._lr_schedulers[0].step()
 
-            actor_loss = self._compute_actor_loss(data, obs_features)
+            actor_loss = self._compute_actor_loss(data)
             self.actor_optimizer.zero_grad(set_to_none=True)
             actor_loss.backward()
             self._clip_grad_norm(self.policy.actor_parameters())
@@ -351,7 +402,7 @@ class _AWACRolloutTrainingShell(Off2OnReplayMixin, AWACCore, OffPolicyAlgorithm)
         gamma: float = 0.99,
         training_freq: int = 64,
         utd: float = 1.0,
-        bootstrap_at_done: str = "always",
+        bootstrap_at_done: str = "truncated",
         offline_sampling: Literal["with_replace", "without_replace"] = "with_replace",
         tau: float = 5e-3,
         actor_lr: float = 3e-4,
@@ -377,6 +428,11 @@ class _AWACRolloutTrainingShell(Off2OnReplayMixin, AWACCore, OffPolicyAlgorithm)
         kernel_init: Optional[KernelInit] = None,
         backbone_type: BackboneType = "mlp",
         std_parameterization: Literal["exp", "uniform"] = "exp",
+        encoder_config: Optional[EncoderConfig] = None,
+        obs_groups: Optional[ObsGroups] = None,
+        critic_encoder_config: Optional[EncoderConfig] = None,
+        encoder_sharing: Optional[EncoderSharing] = None,
+        image_augmentation_seed: Optional[int] = None,
         seed: int = 1,
         device: str | torch.device = "auto",
         logger: Optional[Logger] = None,
@@ -389,12 +445,6 @@ class _AWACRolloutTrainingShell(Off2OnReplayMixin, AWACCore, OffPolicyAlgorithm)
         save_replay_buffer: bool = False,
         save_final_checkpoint: bool = True,
     ) -> None:
-        obs_space = env.single_observation_space
-        if not isinstance(obs_space, spaces.Box):
-            raise TypeError(
-                f"AWAC only supports Box observation spaces, got {type(obs_space)}"
-            )
-        self._is_dict_obs = False
         super().__init__(
             env=env,
             eval_env=eval_env,
@@ -444,6 +494,11 @@ class _AWACRolloutTrainingShell(Off2OnReplayMixin, AWACCore, OffPolicyAlgorithm)
             kernel_init=kernel_init,
             backbone_type=backbone_type,
             std_parameterization=std_parameterization,
+            encoder_config=encoder_config,
+            obs_groups=obs_groups,
+            critic_encoder_config=critic_encoder_config,
+            encoder_sharing=encoder_sharing,
+            image_augmentation_seed=image_augmentation_seed,
         )
         self._setup_model()
         self._init_off2on_params(offline_sampling=offline_sampling)
@@ -487,6 +542,11 @@ class AWAC(AWACCore, OfflineRLAlgorithm):
         kernel_init: Optional[KernelInit] = None,
         backbone_type: BackboneType = "mlp",
         std_parameterization: Literal["exp", "uniform"] = "exp",
+        encoder_config: Optional[EncoderConfig] = None,
+        obs_groups: Optional[ObsGroups] = None,
+        critic_encoder_config: Optional[EncoderConfig] = None,
+        encoder_sharing: Optional[EncoderSharing] = None,
+        image_augmentation_seed: Optional[int] = None,
         seed: int = 1,
         device: str | torch.device = "auto",
         logger: Optional[Logger] = None,
@@ -545,12 +605,10 @@ class AWAC(AWACCore, OfflineRLAlgorithm):
             kernel_init=kernel_init,
             backbone_type=backbone_type,
             std_parameterization=std_parameterization,
+            encoder_config=encoder_config,
+            obs_groups=obs_groups,
+            critic_encoder_config=critic_encoder_config,
+            encoder_sharing=encoder_sharing,
+            image_augmentation_seed=image_augmentation_seed,
         )
-
-        obs_space = self.env.single_observation_space
-        if not isinstance(obs_space, spaces.Box):
-            raise TypeError(
-                f"AWAC supports only Box observation spaces, got {type(obs_space)}"
-            )
-
         self._setup_model()

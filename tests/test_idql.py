@@ -7,12 +7,34 @@ import torch
 from gymnasium import spaces
 
 from rl_garden.algorithms import IDQL, OfflineEnvSpec
+from rl_garden.encoders.config import EncoderConfig
 from rl_garden.policies._diffusion_process import DiffusionProcess
+
+# Small + fast: "gap" pooling (unlike the default "flatten") tolerates tiny
+# images without PlainConv's flatten-layer size mismatch. Mirrors
+# tests/test_fql_core.py's own vision-test encoder config.
+_TEST_IMAGE_SIZE = 16
+_test_encoder_config = EncoderConfig(features_dim=16, plain_conv_pooling="gap")
 
 
 def _state_env(num_envs: int = 2) -> OfflineEnvSpec:
     return OfflineEnvSpec(
         spaces.Box(low=-1.0, high=1.0, shape=(4,), dtype=np.float32),
+        spaces.Box(low=-1.0, high=1.0, shape=(2,), dtype=np.float32),
+        num_envs=num_envs,
+    )
+
+
+def _vision_env(num_envs: int = 2) -> OfflineEnvSpec:
+    return OfflineEnvSpec(
+        spaces.Dict(
+            {
+                "rgb_cam": spaces.Box(
+                    low=0, high=255, shape=(_TEST_IMAGE_SIZE, _TEST_IMAGE_SIZE, 3), dtype=np.uint8
+                ),
+                "state": spaces.Box(low=-1.0, high=1.0, shape=(4,), dtype=np.float32),
+            }
+        ),
         spaces.Box(low=-1.0, high=1.0, shape=(2,), dtype=np.float32),
         num_envs=num_envs,
     )
@@ -37,20 +59,66 @@ def _make_agent(**overrides) -> IDQL:
 
 
 def _fill(agent: IDQL, steps: int = 8) -> None:
+    # env.single_observation_space is Dict({"state": Box}) -- OfflineEnvSpec's
+    # bare Box is boundary-normalized by BaseAlgorithm.__init__ (see
+    # rl_garden.envs.wrappers.VectorizedDictStateWrapper).
     env = agent.env
+    state_shape = env.single_observation_space["state"].shape
     for _ in range(steps):
-        obs = torch.randn(env.num_envs, *env.single_observation_space.shape)
-        next_obs = torch.randn_like(obs)
+        obs = {"state": torch.randn(env.num_envs, *state_shape)}
+        next_obs = {"state": torch.randn_like(obs["state"])}
         actions = torch.randn(env.num_envs, *env.single_action_space.shape).clamp(-1, 1)
         rewards = torch.randn(env.num_envs)
         dones = torch.zeros(env.num_envs)
         agent.replay_buffer.add(obs, next_obs, actions, rewards, dones)
 
 
+def _fill_vision(agent: IDQL, steps: int = 8) -> None:
+    env = agent.env
+    obs_space = env.single_observation_space
+    img_shape = (_TEST_IMAGE_SIZE, _TEST_IMAGE_SIZE, 3)
+    for _ in range(steps):
+        obs = {
+            "rgb_cam": torch.randint(0, 256, (env.num_envs, *img_shape), dtype=torch.uint8),
+            "state": torch.randn(env.num_envs, *obs_space["state"].shape),
+        }
+        next_obs = {
+            "rgb_cam": torch.randint(0, 256, (env.num_envs, *img_shape), dtype=torch.uint8),
+            "state": torch.randn(env.num_envs, *obs_space["state"].shape),
+        }
+        actions = torch.randn(env.num_envs, *env.single_action_space.shape).clamp(-1, 1)
+        rewards = torch.randn(env.num_envs)
+        dones = torch.zeros(env.num_envs)
+        agent.replay_buffer.add(obs, next_obs, actions, rewards, dones)
+
+
+def test_vision_smoke():
+    """Dict/RGBD obs via CombinedExtractor -- the milestone-2 vision path.
+    Mirrors tests/test_fql_core.py's own vision smoke test shape."""
+    agent = _make_agent(env=_vision_env(), encoder_config=_test_encoder_config)
+    _fill_vision(agent)
+    metrics = agent.train(1)
+    for key in ("loss", "actor_loss", "critic_loss", "value_loss"):
+        assert key in metrics
+        assert np.isfinite(metrics[key]), (key, metrics[key])
+
+    obs = {
+        "rgb_cam": torch.randint(
+            0, 256, (1, _TEST_IMAGE_SIZE, _TEST_IMAGE_SIZE, 3), dtype=torch.uint8
+        ),
+        "state": torch.randn(1, 4),
+    }
+    with torch.no_grad():
+        action = agent.policy.predict(obs)
+    assert action.shape == (1, 2)
+    assert torch.all(action >= agent.policy.action_low)
+    assert torch.all(action <= agent.policy.action_high)
+
+
 def test_value_and_critic_losses_match_iql_formulas():
     agent = _make_agent(expectile=0.7, gamma=0.9)
-    obs = torch.randn(4, 4)
-    next_obs = torch.randn(4, 4)
+    obs = {"state": torch.randn(4, 4)}
+    next_obs = {"state": torch.randn(4, 4)}
     actions = torch.randn(4, 2).clamp(-1, 1)
     rewards = torch.tensor([1.0, -1.0, 0.5, 0.0])
     dones = torch.tensor([0.0, 1.0, 0.0, 0.0])
@@ -84,7 +152,7 @@ def test_value_and_critic_losses_match_iql_formulas():
 
 def test_diffusion_actor_loss_decreases():
     agent = _make_agent()
-    obs = torch.randn(16, 4)
+    obs = {"state": torch.randn(16, 4)}
     actions = torch.randn(16, 2).clamp(-1, 1)
     weight = torch.ones(16)
     optimizer = torch.optim.Adam(agent.policy.net_parameters(), lr=1e-2)
@@ -121,7 +189,7 @@ def test_actor_objective_dispatch():
 
 def test_predict_deterministic_vs_stochastic():
     agent = _make_agent()
-    obs = torch.randn(6, 4)
+    obs = {"state": torch.randn(6, 4)}
     det = agent.policy.predict(obs, deterministic=True)
     stoch = agent.policy.predict(obs, deterministic=False)
     assert det.shape == (6, 2)
@@ -175,3 +243,18 @@ def test_checkpoint_roundtrip(tmp_path):
 
     for key, value in agent.policy.state_dict().items():
         assert torch.equal(value, loaded.policy.state_dict()[key]), key
+
+
+def test_checkpoint_roundtrip_vision(tmp_path):
+    agent = _make_agent(env=_vision_env(), encoder_config=_test_encoder_config)
+    _fill_vision(agent)
+    agent.train(2)
+    path = tmp_path / "idql_vision.pt"
+    agent.save(path)
+
+    loaded = _make_agent(env=_vision_env(), encoder_config=_test_encoder_config)
+    loaded.load(path, load_replay_buffer=False)
+
+    for key, value in agent.policy.state_dict().items():
+        assert torch.equal(value, loaded.policy.state_dict()[key]), key
+    assert loaded.encoder_sharing == "shared"

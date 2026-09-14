@@ -3,34 +3,6 @@
 from __future__ import annotations
 
 
-def _gail_env_request(args, run_name):
-    from rl_garden.common.cli_args import resolve_eval_record_dir
-    from rl_garden.envs.backend_registry import EnvRequest, should_create_eval_env
-
-    backend_config = args.resolve_backend_config()
-    eval_record_dir = resolve_eval_record_dir(args, run_name)
-    return EnvRequest(
-        env_id=args.env_id,
-        num_envs=args.num_envs,
-        obs_mode="state",
-        control_mode=args.control_mode,
-        render_mode=args.render_mode,
-        seed=args.seed,
-        camera_width=None,
-        camera_height=None,
-        include_state=True,
-        per_camera_rgbd=False,
-        frame_stack=1,
-        num_eval_envs=args.num_eval_envs,
-        create_eval_env=should_create_eval_env(args),
-        eval_record_dir=eval_record_dir,
-        capture_video=args.capture_video,
-        video_fps=args.video_fps,
-        num_eval_steps=args.num_eval_steps,
-        backend_config=backend_config,
-    )
-
-
 def build_gail(args, env, eval_env, logger, checkpoint_dir):
     from rl_garden.algorithms import GAIL
     from rl_garden.training.inspection import construct_agent
@@ -53,12 +25,13 @@ def build_gail(args, env, eval_env, logger, checkpoint_dir):
 
 
 def run_gail(args: "GAILArgs") -> None:
+    from rl_garden.common.env_args import make_env_request
     from rl_garden.training.online._runner import run_online
 
     run_online(
         args,
         obs_tag="state",
-        make_env_request=_gail_env_request,
+        make_env_request=make_env_request,
         build_agent=build_gail,
     )
 
@@ -69,14 +42,27 @@ def run_gail(args: "GAILArgs") -> None:
 
 from dataclasses import dataclass  # noqa: E402
 
+from rl_garden.common.cli_args import ObservationArgs  # noqa: E402
 from rl_garden.common.env_args import EnvBackendArgs  # noqa: E402
 from rl_garden.training.online._args import GAILTrainingArgs  # noqa: E402
 from rl_garden.training.online._registry import registry  # noqa: E402
 
 
 @dataclass
-class GAILArgs(GAILTrainingArgs, EnvBackendArgs):
+class GAILArgs(GAILTrainingArgs, ObservationArgs, EnvBackendArgs):
     """GAIL (Ho & Ermon 2016) -- PPO generator + adversarial discriminator.
+
+    State-only in practice: ``build_gail`` never forwards
+    ``encoder_config``/``obs_groups``/``critic_encoder_config`` from the CLI
+    (it calls ``_ppo_common_kwargs`` with an empty ``image_kwargs``), even
+    though ``ObservationArgs`` is present (for CLI/config uniformity --
+    ``--obs.rgb`` parses but is silently unused by this entrypoint). This is
+    a CLI-wiring choice, not a discriminator limitation:
+    ``GAILDiscriminator`` reads critic-role features
+    (``self.policy.extract_critic_features``/``critic_features_dim``, see
+    ``rl_garden/algorithms/gail.py``) and is schema-agnostic, so direct
+    construction with ``obs_groups``/``critic_encoder_config`` (bypassing
+    this CLI entrypoint) already supports asymmetric/image observations.
 
     Env backend: ``--env_backend d4rl_legacy`` (D4RL MuJoCo locomotion).
     Expert demonstrations are loaded separately via ``--demo_env_id``
@@ -85,4 +71,10 @@ class GAILArgs(GAILTrainingArgs, EnvBackendArgs):
     """
 
 
-registry.register("gail", GAILArgs, run_gail)
+def _gail_algorithm_cls() -> type:
+    from rl_garden.algorithms import GAIL
+
+    return GAIL
+
+
+registry.register("gail", GAILArgs, run_gail, algorithm_cls=_gail_algorithm_cls)

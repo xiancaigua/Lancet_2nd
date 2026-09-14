@@ -20,7 +20,6 @@ env_backend: d4rl_legacy
 dataset_backend: d4rl_legacy
 env_id: kitchen-mixed-v0
 offline_dataset: kitchen-mixed-v0
-obs_mode: state
 num_envs: 1
 num_eval_envs: 1
 
@@ -43,7 +42,7 @@ critic_subsample_size: 2
 actor_use_layer_norm: true
 critic_use_layer_norm: true
 backup_entropy: false
-target_entropy: 0.0
+target_entropy: auto
 bootstrap_at_done: truncated
 
 use_cql_loss: true

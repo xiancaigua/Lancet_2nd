@@ -42,7 +42,7 @@ class OffPolicyAlgorithm(BaseAlgorithm):
         tau: float = 0.01,
         training_freq: int = 64,
         utd: float = 0.5,
-        bootstrap_at_done: str = "always",
+        bootstrap_at_done: str = "truncated",
         seed: int = 1,
         device: str | torch.device = "auto",
         logger: Optional[Logger] = None,
@@ -209,6 +209,30 @@ class OffPolicyAlgorithm(BaseAlgorithm):
         infos,
     ) -> None:
         del action_context, terminations, truncations, infos
+
+    def _on_learning_starts(self) -> Optional[dict[str, float]]:
+        """Hook called once, on the iteration where ``self._global_step``
+        first reaches ``self.learning_starts`` (before that iteration's
+        regular ``self.train(...)`` call, see ``learn()`` below). Default
+        no-op: returns ``None``, and the base loop proceeds with its normal
+        per-iteration ``self.train(grad_steps, ...)`` call as usual.
+
+        A subclass that returns a non-``None`` metrics dict has fully
+        handled this iteration's gradient updates itself -- the base loop
+        uses the returned dict as this iteration's ``losses`` (for logging)
+        and SKIPS its own ``self.train(...)`` call for this one iteration
+        only, instead of also taking the loop's regular per-iteration
+        update on top. Added for ``ModelBasedAlgorithm``/``TDMPC2``
+        (model-based-base plan 1.5): TD-MPC2 overrides this to run a
+        ``learning_starts``-sized pretrain burst exactly at the seed-step
+        boundary (matching upstream TD-MPC2's ``seed_steps`` semantics) via
+        ``self.train(self.learning_starts, ...)`` -- the base loop's per-
+        step accounting (``training_freq=1``, one env step per iteration)
+        cannot express "N gradient steps on exactly one iteration, then 1
+        per iteration after" without this hook, since ``grad_steps_per_iteration``
+        is a fixed constant computed once in ``__init__``.
+        """
+        return None
 
     # --- bootstrap bookkeeping ---
 
@@ -481,6 +505,14 @@ class OffPolicyAlgorithm(BaseAlgorithm):
                     )
                 previous_iteration_start = previous_step
                 continue
+            # The crossing iteration: previous_step was still below
+            # learning_starts, this iteration's rollout pushed _global_step
+            # to/past it. _on_learning_starts() fires exactly once here (a
+            # resumed run that starts already past learning_starts skips
+            # this -- previous_step is >= learning_starts from the first
+            # iteration, matching TD-MPC2's pre-refactor exact-equality
+            # burst condition, see that hook's docstring).
+            just_crossed_learning_starts = previous_step < self.learning_starts
             learning_has_started = True
 
             # Episode-mode gradient steps scale with what was collected,
@@ -492,7 +524,14 @@ class OffPolicyAlgorithm(BaseAlgorithm):
                 else self.grad_steps_per_iteration
             )
             update_t = time.perf_counter()
-            losses = self.train(grad_steps, compute_info=should_log)
+            burst_losses = (
+                self._on_learning_starts() if just_crossed_learning_starts else None
+            )
+            losses = (
+                burst_losses
+                if burst_losses is not None
+                else self.train(grad_steps, compute_info=should_log)
+            )
             update_time = time.perf_counter() - update_t
             cumulative["update_time"] += update_time
 

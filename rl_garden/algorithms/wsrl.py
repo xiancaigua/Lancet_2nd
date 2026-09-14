@@ -14,10 +14,12 @@ from typing import Any, Literal, Optional, Sequence
 
 import torch
 
+from rl_garden.algorithms._observation import EncoderSharing
 from rl_garden.algorithms.calql import _CalQLRolloutTrainingShell
 from rl_garden.common.logger import Logger
 from rl_garden.common.training_phase import InitialTrainingPhase
-from rl_garden.encoders.combined import ImageEncoderFactory
+from rl_garden.encoders.config import EncoderConfig
+from rl_garden.observations import ObsGroups
 
 
 class WSRL(_CalQLRolloutTrainingShell):
@@ -38,7 +40,7 @@ class WSRL(_CalQLRolloutTrainingShell):
         tau: float = 0.005,
         training_freq: int = 64,
         utd: float = 1.0,
-        bootstrap_at_done: str = "always",
+        bootstrap_at_done: str = "truncated",
         # Optimizers
         policy_lr: float = 1e-4,
         q_lr: float = 3e-4,
@@ -100,14 +102,10 @@ class WSRL(_CalQLRolloutTrainingShell):
         use_calql: bool = True,
         calql_bound_random_actions: bool = False,
         # Dict observation encoding
-        image_encoder_factory: Optional[ImageEncoderFactory] = None,
-        image_keys: Optional[tuple[str, ...]] = None,
-        state_key: Optional[str] = None,
-        use_proprio: Optional[bool] = None,
-        proprio_latent_dim: Optional[int] = None,
-        image_fusion_mode: Optional[str] = None,
-        enable_stacking: Optional[bool] = None,
-        detach_encoder_on_actor: bool = True,
+        encoder_config: Optional[EncoderConfig] = None,
+        obs_groups: Optional[ObsGroups] = None,
+        critic_encoder_config: Optional[EncoderConfig] = None,
+        encoder_sharing: Optional[EncoderSharing] = None,
         # WSRL phase control
         use_td_loss: bool = True,
         online_cql_alpha: float = 0.0,
@@ -117,6 +115,11 @@ class WSRL(_CalQLRolloutTrainingShell):
         sparse_reward_mc: bool = False,
         sparse_negative_reward: float = 0.0,
         success_threshold: float = 0.5,
+        # SARSA/FQE reference-value network (fixes MC-return's truncation
+        # bias on continuing tasks, e.g. D4RL locomotion). Opt-in only.
+        use_sarsa_reference: bool = False,
+        sarsa_hidden_dims: Sequence[int] = (256, 256),
+        sarsa_lr: float = 3e-4,
         # General
         policy_kwargs: Optional[dict[str, Any]] = None,
         seed: int = 1,
@@ -133,17 +136,10 @@ class WSRL(_CalQLRolloutTrainingShell):
         save_final_checkpoint: bool = True,
         initial_training_phase: Optional[InitialTrainingPhase] = None,
     ) -> None:
-        self._configure_observation_kwargs(
-            env,
-            image_encoder_factory=image_encoder_factory,
-            image_keys=image_keys,
-            state_key=state_key,
-            use_proprio=use_proprio,
-            proprio_latent_dim=proprio_latent_dim,
-            image_fusion_mode=image_fusion_mode,
-            enable_stacking=enable_stacking,
-            detach_encoder_on_actor=detach_encoder_on_actor,
-        )
+        self.encoder_config = encoder_config
+        self.obs_groups = obs_groups
+        self.critic_encoder_config = critic_encoder_config
+        self.encoder_sharing = encoder_sharing
 
         super().__init__(
             env=env,
@@ -214,6 +210,9 @@ class WSRL(_CalQLRolloutTrainingShell):
             sparse_reward_mc=sparse_reward_mc,
             sparse_negative_reward=sparse_negative_reward,
             success_threshold=success_threshold,
+            use_sarsa_reference=use_sarsa_reference,
+            sarsa_hidden_dims=sarsa_hidden_dims,
+            sarsa_lr=sarsa_lr,
             use_td_loss=use_td_loss,
             online_cql_alpha=online_cql_alpha,
             online_use_cql_loss=online_use_cql_loss,

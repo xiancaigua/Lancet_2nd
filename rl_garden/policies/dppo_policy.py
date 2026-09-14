@@ -17,6 +17,16 @@ supports ``cond_steps`` generally on the BC pretraining side (see
 offline trajectories) but requires ``cond_steps == 1`` for online DPPO
 fine-tuning -- the loaded BC checkpoint must also have been trained with
 ``cond_steps == 1``.
+
+Box or Dict (CNN-based vision, via ``CombinedExtractor``) observations.
+``_cond(obs)`` is the single seam where obs becomes conditioning -- rollout
+collection (``DPPO._rollout_step``) and training (``DPPO._dppo_loss``) both
+call it once per env-step/minibatch and reuse the resulting tensor across
+the whole K-step denoising chain, so introducing an actor_extractor call here
+does not risk re-running an (possibly expensive, image-encoding) extractor
+per denoising step. Gradient isolation (critic trains the encoder, actor
+path detaches) is implemented at the ``DPPO._dppo_loss`` call site, not
+inside this method -- see that method's own comment.
 """
 from __future__ import annotations
 
@@ -30,10 +40,11 @@ from gymnasium import spaces
 from torch.distributions import Normal
 
 from rl_garden.common.types import Obs
+from rl_garden.encoders.base import BaseFeaturesExtractor
 from rl_garden.networks import Activation, DiffusionMLP, KernelInit, build_diffusion_mlp_head
 from rl_garden.networks.mlp import _apply_kernel_init, resolve_activation
 from rl_garden.policies._diffusion_process import DiffusionProcess
-from rl_garden.policies.base import BasePolicy
+from rl_garden.policies.base import BasePolicy, EncoderSharing
 
 
 class _CriticObs(nn.Module):
@@ -66,9 +77,12 @@ class _CriticObs(nn.Module):
 class DPPOPolicy(DiffusionProcess, BasePolicy):
     def __init__(
         self,
-        observation_space: spaces.Box,
+        observation_space: spaces.Box | spaces.Dict,
         action_space: spaces.Box,
         *,
+        actor_extractor: BaseFeaturesExtractor,
+        critic_extractor: Optional[BaseFeaturesExtractor] = None,
+        encoder_sharing: "EncoderSharing" = "shared_critic_grad",
         horizon_steps: int,
         act_steps: int,
         denoising_steps: int,
@@ -87,19 +101,20 @@ class DPPOPolicy(DiffusionProcess, BasePolicy):
         min_sampling_denoising_std: float = 0.1,
         min_logprob_denoising_std: float = 0.1,
     ) -> None:
-        super().__init__()
-        assert isinstance(action_space, spaces.Box), "DPPOPolicy requires a Box action space."
-        assert isinstance(
-            observation_space, spaces.Box
-        ), "DPPOPolicy is state-only (Box observations); vision is out of scope."
+        assert type(action_space) is spaces.Box, "DPPOPolicy requires a Box action space."
         if not (1 <= act_steps <= horizon_steps):
             raise ValueError(f"act_steps must be in [1, horizon_steps], got {act_steps}.")
         if not (1 <= ft_denoising_steps <= denoising_steps):
             raise ValueError(
                 f"ft_denoising_steps must be in [1, denoising_steps], got {ft_denoising_steps}."
             )
-        self.observation_space = observation_space
-        self.action_space = action_space
+        super().__init__(
+            observation_space,
+            action_space,
+            actor_extractor=actor_extractor,
+            critic_extractor=critic_extractor,
+            encoder_sharing=encoder_sharing,
+        )
         self.horizon_steps = horizon_steps
         self.act_steps = act_steps
         self.ft_denoising_steps = ft_denoising_steps
@@ -107,8 +122,8 @@ class DPPOPolicy(DiffusionProcess, BasePolicy):
         self.min_logprob_denoising_std = min_logprob_denoising_std
 
         self.action_dim = int(np.prod(action_space.shape))
-        self.obs_dim = int(np.prod(observation_space.shape))
-        cond_dim = self.obs_dim  # cond_steps == 1 only, see module docstring
+        cond_dim = actor_extractor.features_dim  # cond_steps == 1 only, see module docstring
+        critic_cond_dim = self.critic_features_dim
 
         actor = DiffusionMLP(
             action_dim=self.action_dim,
@@ -126,7 +141,7 @@ class DPPOPolicy(DiffusionProcess, BasePolicy):
             p.requires_grad_(False)
 
         self.critic = _CriticObs(
-            cond_dim,
+            critic_cond_dim,
             critic_mlp_dims,
             activation_fn=critic_activation_fn,
             residual_style=critic_residual_style,
@@ -151,8 +166,33 @@ class DPPOPolicy(DiffusionProcess, BasePolicy):
         self.actor.load_state_dict(net_state_dict)
         self.actor_ft.load_state_dict(net_state_dict)
 
-    def _cond(self, obs: torch.Tensor) -> dict:
-        return {"state": obs.unsqueeze(1)}
+    def _cond(self, obs: Obs, stop_gradient: bool = False) -> dict:
+        features = self.actor_extractor.extract(obs, stop_gradient=stop_gradient)
+        return {"state": features.unsqueeze(1)}
+
+    def _critic_cond(self, obs: Obs, stop_gradient: bool = False) -> dict:
+        """The critic-role counterpart of ``_cond``: uses
+        ``critic_extractor`` when set (falls back to ``actor_extractor`` in
+        the default shared-encoder case)."""
+        features = self.extract_critic_features(obs, stop_gradient=stop_gradient)
+        return {"state": features.unsqueeze(1)}
+
+    # --- parameter groups for optimizers (mirrors SACPolicy) ---
+
+    def actor_parameters(self):
+        # Actor-only by default; the shared-encoder case trains
+        # actor_extractor via critic_and_encoder_parameters' value loss
+        # instead (see BasePolicy.extract_actor_features's stop-gradient
+        # rule). When critic_extractor is genuinely separate, actor_extractor
+        # is actor-exclusive -- nothing else would ever train it -- so it
+        # belongs on this optimizer.
+        if self.critic_extractor is not None and self.critic_extractor is not self.actor_extractor:
+            yield from self.actor_extractor.parameters()
+        yield from self.actor_ft.parameters()
+
+    def critic_and_encoder_parameters(self):
+        yield from self.critic.parameters()
+        yield from (self.critic_extractor or self.actor_extractor).parameters()
 
     def _predict_noise_mixed(
         self, x: torch.Tensor, t: torch.Tensor, cond: dict
@@ -169,7 +209,7 @@ class DPPOPolicy(DiffusionProcess, BasePolicy):
             noise[ft_indices] = noise_ft
         return noise
 
-    def sample_rollout_chain(self, obs: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def sample_rollout_chain(self, obs: Obs) -> tuple[torch.Tensor, torch.Tensor]:
         """No-grad DDPM sampling for rollout collection. Returns
         ``(chain, action_chunk)``: ``chain`` is
         ``(N, ft_denoising_steps+1, horizon_steps, action_dim)``,
@@ -228,11 +268,10 @@ class DPPOPolicy(DiffusionProcess, BasePolicy):
         std = torch.exp(0.5 * logvar).clamp(min=self.min_logprob_denoising_std)
         return Normal(mean, std).log_prob(chains_next)
 
-    def predict_values(self, obs: torch.Tensor) -> torch.Tensor:
-        return self.critic(self._cond(obs)["state"]).view(-1)
+    def predict_values(self, obs: Obs) -> torch.Tensor:
+        return self.critic(self._critic_cond(obs)["state"]).view(-1)
 
     def predict(self, obs: Obs, deterministic: bool = False) -> torch.Tensor:
-        assert isinstance(obs, torch.Tensor)
         cond = self._cond(obs)
         x, _ = self.sample_chain(
             cond,

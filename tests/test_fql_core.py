@@ -10,16 +10,16 @@ import torch.nn.functional as F
 from gymnasium import spaces
 
 from rl_garden.algorithms import FQL, OfflineEnvSpec
-from rl_garden.encoders.combined import CombinedExtractor, default_image_encoder_factory
+from rl_garden.encoders.config import EncoderConfig
+from rl_garden.encoders.factory import build_observation_encoder
 from rl_garden.encoders.flatten import FlattenExtractor
+from rl_garden.observations import ObsGroups
 from rl_garden.policies.fql_policy import FQLPolicy
 
 # Small + fast: "gap" pooling (unlike the default "flatten") tolerates tiny
 # images without PlainConv's flatten-layer size mismatch.
 _TEST_IMAGE_SIZE = 16
-_test_image_encoder_factory = default_image_encoder_factory(
-    features_dim=16, plain_conv_pooling="gap"
-)
+_test_encoder_config = EncoderConfig(features_dim=16, plain_conv_pooling="gap")
 
 
 def _state_env(num_envs: int = 1) -> OfflineEnvSpec:
@@ -34,7 +34,7 @@ def _vision_env(num_envs: int = 1) -> OfflineEnvSpec:
     return OfflineEnvSpec(
         spaces.Dict(
             {
-                "rgb": spaces.Box(
+                "rgb_cam": spaces.Box(
                     low=0, high=255, shape=(_TEST_IMAGE_SIZE, _TEST_IMAGE_SIZE, 3), dtype=np.uint8
                 ),
                 "state": spaces.Box(low=-1.0, high=1.0, shape=(6,), dtype=np.float32),
@@ -43,6 +43,45 @@ def _vision_env(num_envs: int = 1) -> OfflineEnvSpec:
         spaces.Box(low=-1.0, high=1.0, shape=(3,), dtype=np.float32),
         num_envs=num_envs,
     )
+
+
+def _vision_extra_state_env(num_envs: int = 1) -> OfflineEnvSpec:
+    """``_vision_env`` plus a critic-only ``state_object_pose`` key
+    (Section A's ``state_<name>`` family)."""
+    return OfflineEnvSpec(
+        spaces.Dict(
+            {
+                "rgb_cam": spaces.Box(
+                    low=0, high=255, shape=(_TEST_IMAGE_SIZE, _TEST_IMAGE_SIZE, 3), dtype=np.uint8
+                ),
+                "state": spaces.Box(low=-1.0, high=1.0, shape=(6,), dtype=np.float32),
+                "state_object_pose": spaces.Box(low=-1.0, high=1.0, shape=(3,), dtype=np.float32),
+            }
+        ),
+        spaces.Box(low=-1.0, high=1.0, shape=(3,), dtype=np.float32),
+        num_envs=num_envs,
+    )
+
+
+def _fill_vision_extra_state(agent: FQL, steps: int = 64) -> None:
+    env = agent.env
+    obs_space = env.single_observation_space
+    img_shape = (_TEST_IMAGE_SIZE, _TEST_IMAGE_SIZE, 3)
+    for _ in range(steps):
+        obs = {
+            "rgb_cam": torch.randint(0, 256, (env.num_envs, *img_shape), dtype=torch.uint8),
+            "state": torch.randn(env.num_envs, *obs_space["state"].shape),
+            "state_object_pose": torch.rand(env.num_envs, *obs_space["state_object_pose"].shape) * 2 - 1,
+        }
+        next_obs = {
+            "rgb_cam": torch.randint(0, 256, (env.num_envs, *img_shape), dtype=torch.uint8),
+            "state": torch.randn(env.num_envs, *obs_space["state"].shape),
+            "state_object_pose": torch.rand(env.num_envs, *obs_space["state_object_pose"].shape) * 2 - 1,
+        }
+        actions = torch.rand(env.num_envs, *env.single_action_space.shape) * 2 - 1
+        rewards = torch.randn(env.num_envs)
+        dones = torch.zeros(env.num_envs)
+        agent.replay_buffer.add(obs, next_obs, actions, rewards, dones)
 
 
 def _make_agent(**kwargs) -> FQL:
@@ -60,10 +99,14 @@ def _make_agent(**kwargs) -> FQL:
 
 
 def _fill(agent: FQL, steps: int = 64) -> None:
+    # env.single_observation_space is Dict({"state": Box}) -- OfflineEnvSpec's
+    # bare Box is boundary-normalized by BaseAlgorithm.__init__ (see
+    # rl_garden.envs.wrappers.VectorizedDictStateWrapper).
     env = agent.env
+    state_shape = env.single_observation_space["state"].shape
     for _ in range(steps):
-        obs = torch.randn(env.num_envs, *env.single_observation_space.shape)
-        next_obs = torch.randn_like(obs)
+        obs = {"state": torch.randn(env.num_envs, *state_shape)}
+        next_obs = {"state": torch.randn_like(obs["state"])}
         actions = torch.rand(env.num_envs, *env.single_action_space.shape) * 2 - 1
         rewards = torch.randn(env.num_envs)
         dones = torch.zeros(env.num_envs)
@@ -76,11 +119,11 @@ def _fill_vision(agent: FQL, steps: int = 64) -> None:
     img_shape = (_TEST_IMAGE_SIZE, _TEST_IMAGE_SIZE, 3)
     for _ in range(steps):
         obs = {
-            "rgb": torch.randint(0, 256, (env.num_envs, *img_shape), dtype=torch.uint8),
+            "rgb_cam": torch.randint(0, 256, (env.num_envs, *img_shape), dtype=torch.uint8),
             "state": torch.randn(env.num_envs, *obs_space["state"].shape),
         }
         next_obs = {
-            "rgb": torch.randint(0, 256, (env.num_envs, *img_shape), dtype=torch.uint8),
+            "rgb_cam": torch.randint(0, 256, (env.num_envs, *img_shape), dtype=torch.uint8),
             "state": torch.randn(env.num_envs, *obs_space["state"].shape),
         }
         actions = torch.rand(env.num_envs, *env.single_action_space.shape) * 2 - 1
@@ -92,7 +135,7 @@ def _fill_vision(agent: FQL, steps: int = 64) -> None:
 def _assert_predict_in_bounds(agent: FQL) -> None:
     obs_space = agent.env.single_observation_space
     obs = {
-        "rgb": torch.randint(
+        "rgb_cam": torch.randint(
             0, 256, (1, _TEST_IMAGE_SIZE, _TEST_IMAGE_SIZE, 3), dtype=torch.uint8
         ),
         "state": torch.randn(1, *obs_space["state"].shape),
@@ -110,15 +153,15 @@ def test_rejects_unsupported_observation_space():
         spaces.Box(low=-1.0, high=1.0, shape=(3,), dtype=np.float32),
         num_envs=1,
     )
-    with pytest.raises(TypeError, match="Box or Dict"):
+    with pytest.raises(ValueError, match="Box or Dict"):
         FQL(env=unsupported, buffer_device="cpu", device="cpu")
 
 
 def test_vision_shared_encoder_smoke():
     agent = _make_agent(
         env=_vision_env(),
-        encoder_sharing="shared",
-        image_encoder_factory=_test_image_encoder_factory,
+        encoder_sharing="shared_critic_grad",
+        encoder_config=_test_encoder_config,
     )
     _fill_vision(agent)
     metrics = agent.train(1, compute_info=True)
@@ -133,7 +176,7 @@ def test_vision_separate_encoder_smoke():
     agent = _make_agent(
         env=_vision_env(),
         encoder_sharing="separate",
-        image_encoder_factory=_test_image_encoder_factory,
+        encoder_config=_test_encoder_config,
     )
     _fill_vision(agent)
     metrics = agent.train(1, compute_info=True)
@@ -148,13 +191,11 @@ def test_separate_encoder_produces_three_independent_instances():
     act_space = spaces.Box(low=-1.0, high=1.0, shape=(3,), dtype=np.float32)
 
     def _make_extractor():
-        return CombinedExtractor(
-            observation_space=obs_space, image_encoder_factory=_test_image_encoder_factory
-        )
+        return build_observation_encoder(obs_space, _test_encoder_config)
 
     shared_fe = _make_extractor()
     shared_policy = FQLPolicy(
-        obs_space, act_space, shared_fe, net_arch=[16, 16], encoder_sharing="shared"
+        obs_space, act_space, shared_fe, net_arch=[16, 16], encoder_sharing="shared_critic_grad"
     )
 
     critic_fe = _make_extractor()
@@ -163,26 +204,26 @@ def test_separate_encoder_produces_three_independent_instances():
     separate_policy = FQLPolicy(
         obs_space,
         act_space,
-        critic_fe,
+        onestep_fe,
         net_arch=[16, 16],
         encoder_sharing="separate",
+        critic_extractor=critic_fe,
         actor_bc_flow_encoder=bc_fe,
-        actor_onestep_flow_encoder=onestep_fe,
     )
 
-    shared_encoder_params = sum(p.numel() for p in shared_policy.features_extractor.parameters())
+    shared_encoder_params = sum(p.numel() for p in shared_policy.actor_extractor.parameters())
     separate_encoder_params = (
-        sum(p.numel() for p in separate_policy.features_extractor.parameters())
+        sum(p.numel() for p in separate_policy.critic_extractor.parameters())
         + sum(p.numel() for p in separate_policy.actor_bc_flow_encoder.parameters())
-        + sum(p.numel() for p in separate_policy.actor_onestep_flow_encoder.parameters())
+        + sum(p.numel() for p in separate_policy.actor_extractor.parameters())
     )
     assert separate_encoder_params == 3 * shared_encoder_params
 
     ptrs = set()
     for encoder in (
-        separate_policy.features_extractor,
+        separate_policy.critic_extractor,
         separate_policy.actor_bc_flow_encoder,
-        separate_policy.actor_onestep_flow_encoder,
+        separate_policy.actor_extractor,
     ):
         for p in encoder.parameters():
             assert p.data_ptr() not in ptrs, "encoder instances must not share storage"
@@ -197,11 +238,11 @@ def test_separate_mode_actor_optimizer_excludes_critic_encoder():
     agent = _make_agent(
         env=_vision_env(),
         encoder_sharing="separate",
-        image_encoder_factory=_test_image_encoder_factory,
+        encoder_config=_test_encoder_config,
     )
     _fill_vision(agent)
 
-    critic_encoder_ptrs = {p.data_ptr() for p in agent.policy.features_extractor.parameters()}
+    critic_encoder_ptrs = {p.data_ptr() for p in agent.policy.critic_extractor.parameters()}
     actor_param_ptrs = {p.data_ptr() for p in agent.policy.actor_parameters()}
     assert critic_encoder_ptrs.isdisjoint(actor_param_ptrs)
 
@@ -209,6 +250,77 @@ def test_separate_mode_actor_optimizer_excludes_critic_encoder():
         p.data_ptr() for group in agent.actor_optimizer.param_groups for p in group["params"]
     }
     assert critic_encoder_ptrs.isdisjoint(actor_optimizer_ptrs)
+
+
+def test_asymmetric_obs_groups_critic_sees_extra_state_actor_does_not():
+    """End-to-end asymmetric actor/critic encoders via state_<name>: critic
+    sees state_object_pose, actor does not, encoder_sharing="separate".
+    Asserts the schema exclusion on all three FQL encoders (critic,
+    actor_bc_flow, actor_onestep/actor_extractor -- the plan's documented
+    single exception to the actor_extractor/critic_extractor contract),
+    that each encoder's parameters sit only in its own optimizer, that one
+    real train() step actually moves each encoder's own optimizer's
+    parameters, and that it never moves a differently-owned encoder's
+    parameters."""
+    agent = _make_agent(
+        env=_vision_extra_state_env(),
+        encoder_sharing="separate",
+        encoder_config=_test_encoder_config,
+        obs_groups=ObsGroups(
+            actor=("rgb_cam", "state"),
+            critic=("rgb_cam", "state", "state_object_pose"),
+        ),
+    )
+    _fill_vision_extra_state(agent)
+
+    actor_extractor = agent.policy.actor_extractor  # actor_onestep_flow's own
+    critic_extractor = agent.policy.critic_extractor
+    bc_flow_encoder = agent.policy.actor_bc_flow_encoder
+    assert critic_extractor is not None
+    assert bc_flow_encoder is not None
+    assert "state_object_pose" not in actor_extractor.state_keys
+    assert "state_object_pose" in critic_extractor.state_keys
+    assert "state_object_pose" not in bc_flow_encoder.state_keys
+
+    critic_ptrs = {p.data_ptr() for p in critic_extractor.parameters()}
+    bc_flow_ptrs = {p.data_ptr() for p in bc_flow_encoder.parameters()}
+    actor_extractor_ptrs = {p.data_ptr() for p in actor_extractor.parameters()}
+    actor_optimizer_ptrs = {
+        p.data_ptr() for group in agent.actor_optimizer.param_groups for p in group["params"]
+    }
+    critic_optimizer_ptrs = {
+        p.data_ptr() for group in agent.critic_optimizer.param_groups for p in group["params"]
+    }
+    assert critic_ptrs, "critic_extractor has no parameters -- test is vacuous"
+    assert bc_flow_ptrs, "actor_bc_flow_encoder has no parameters -- test is vacuous"
+    assert actor_extractor_ptrs, "actor_extractor has no parameters -- test is vacuous"
+
+    assert critic_ptrs.issubset(critic_optimizer_ptrs)
+    assert critic_ptrs.isdisjoint(actor_optimizer_ptrs)
+    assert bc_flow_ptrs.issubset(actor_optimizer_ptrs)
+    assert bc_flow_ptrs.isdisjoint(critic_optimizer_ptrs)
+    assert actor_extractor_ptrs.issubset(actor_optimizer_ptrs)
+    assert actor_extractor_ptrs.isdisjoint(critic_optimizer_ptrs)
+
+    before = {
+        "critic": [p.detach().clone() for p in critic_extractor.parameters()],
+        "bc_flow": [p.detach().clone() for p in bc_flow_encoder.parameters()],
+        "actor": [p.detach().clone() for p in actor_extractor.parameters()],
+    }
+    metrics = agent.train(1, compute_info=True)
+    for key in ("critic_loss", "actor_loss", "bc_flow_loss", "distill_loss", "q_loss"):
+        assert key in metrics
+        assert np.isfinite(metrics[key]), (key, metrics[key])
+
+    def _changed(before_params, extractor) -> bool:
+        return any(
+            not torch.equal(b, a)
+            for b, a in zip(before_params, extractor.parameters())
+        )
+
+    assert _changed(before["critic"], critic_extractor), "critic loss must train critic_extractor"
+    assert _changed(before["bc_flow"], bc_flow_encoder), "bc_flow_loss must train actor_bc_flow_encoder"
+    assert _changed(before["actor"], actor_extractor), "actor loss must train actor_extractor"
 
 
 def test_gradient_step_produces_finite_losses():
@@ -289,24 +401,53 @@ def test_distill_loss_target_is_detached_from_teacher():
 
 
 def test_train_computes_distill_target_without_grad(monkeypatch):
-    """Regression guard on the production call site in FQLCore.train():
-    accidentally dropping the torch.no_grad() around compute_flow_actions
-    must fail this test, not just a standalone no_grad() written by hand."""
+    """Regression guard on the production call site in FQLCore.train()
+    (now routed through ``flow_onestep_distill_loss``'s no_grad teacher
+    rollout): accidentally dropping the torch.no_grad() there must fail
+    this test, not just a standalone no_grad() written by hand."""
     agent = _make_agent()
     _fill(agent)
 
     seen_grad_enabled = []
-    original = agent.policy.compute_flow_actions
+    original = agent.policy.actor_bc_flow.integrate
 
     def spy(*args, **kwargs):
         seen_grad_enabled.append(torch.is_grad_enabled())
         return original(*args, **kwargs)
 
-    monkeypatch.setattr(agent.policy, "compute_flow_actions", spy)
+    monkeypatch.setattr(agent.policy.actor_bc_flow, "integrate", spy)
     agent.train(1)
 
     assert seen_grad_enabled
     assert not any(seen_grad_enabled)
+
+
+def test_actor_update_passes_action_bounds_to_distill_loss():
+    """Reference parity (3rd_party/fql/agents/fql.py `compute_flow_actions`):
+    the teacher's Euler-unroll distill target is clamped to the action
+    bounds. `FQLCore._actor_update` must forward `low`/`high` into
+    `flow_onestep_distill_loss` so that clamp actually happens -- omitting
+    it silently leaves the distill target unclamped."""
+    import rl_garden.algorithms.fql as fql_module
+
+    agent = _make_agent()
+    _fill(agent)
+
+    seen_kwargs = []
+    original = fql_module.flow_onestep_distill_loss
+
+    def spy(*args, **kwargs):
+        seen_kwargs.append(kwargs)
+        return original(*args, **kwargs)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(fql_module, "flow_onestep_distill_loss", spy)
+        agent.train(1)
+
+    assert seen_kwargs
+    for kwargs in seen_kwargs:
+        assert torch.equal(kwargs["low"], agent.policy.action_low)
+        assert torch.equal(kwargs["high"], agent.policy.action_high)
 
 
 def test_q_agg_min_is_not_silently_ignored():

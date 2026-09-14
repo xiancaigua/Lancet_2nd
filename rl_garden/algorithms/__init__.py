@@ -5,15 +5,23 @@ from rl_garden.algorithms.awac import AWAC
 from rl_garden.algorithms.base_algorithm import BaseAlgorithm
 from rl_garden.algorithms.bc import BC
 from rl_garden.algorithms.bcq import BCQ
+from rl_garden.algorithms.bppo import BPPO
 from rl_garden.algorithms.flash_sac import FlashSAC
 from rl_garden.algorithms.flow_bc import FlowBC
+from rl_garden.algorithms.flow_ppo import FlowPPO
+from rl_garden.algorithms.floq import FloQ, Off2OnFloQ
+from rl_garden.algorithms.fino import FINO, Off2OnFINO
 from rl_garden.algorithms.fql import FQL
+from rl_garden.algorithms.value_flows import ValueFlows, Off2OnValueFlows
 from rl_garden.algorithms.calql import CalQL
+from rl_garden.algorithms.consistency_distill_bc import ConsistencyDistillBC
 from rl_garden.algorithms.cql import CQL
 from rl_garden.algorithms.dagger import DAgger
 from rl_garden.algorithms.ddpg import DDPG
 from rl_garden.algorithms.diffusion_bc import DiffusionBC
+from rl_garden.algorithms.diffusion_cm_distill import DiffusionCMDistillOnline
 from rl_garden.algorithms.dppo import DPPO
+from rl_garden.algorithms.dreamer_v3 import DreamerV3
 from rl_garden.algorithms.edac import EDAC
 from rl_garden.algorithms.explore import ExPLORe
 from rl_garden.algorithms.gail import GAIL
@@ -23,6 +31,7 @@ from rl_garden.algorithms.iql import IQL
 from rl_garden.algorithms.jsrl import JSRL
 from rl_garden.algorithms.lancet import Lancet, ResidualEnsemble
 from rl_garden.algorithms.lancet_v1 import LancetV1, ResidualQNetworkV1
+from rl_garden.algorithms.mean_flow_bc import MeanFlowBC
 from rl_garden.algorithms.offline import (
     OfflineEnvSpec,
     OfflinePretrainResult,
@@ -60,10 +69,11 @@ from rl_garden.algorithms.supe import SUPE
 from rl_garden.algorithms.td3 import TD3
 from rl_garden.algorithms.td3_bc import TD3BC
 from rl_garden.algorithms.tdmpc2 import TDMPC2
-from rl_garden.algorithms.tdmpc2.multitask import TDMPC2Multitask
+from rl_garden.algorithms.tdmpc2_multitask import TDMPC2Multitask
 from rl_garden.algorithms.transformer_ppo import TransformerPPO
 from rl_garden.algorithms.transformer_sac import TransformerSAC
-from rl_garden.algorithms.vision_diffusion_bc import VisionDiffusionBC
+from rl_garden.algorithms.unio4 import UniO4
+from rl_garden.algorithms.unio4_ope import UniO4OPE
 from rl_garden.algorithms.wsrl import WSRL
 
 __all__ = [
@@ -74,15 +84,23 @@ __all__ = [
     "BaseAlgorithm",
     "BC",
     "BCQ",
+    "BPPO",
     "CalQL",
+    "ConsistencyDistillBC",
     "FlashSAC",
     "FlowBC",
+    "FlowPPO",
+    "FloQ",
+    "FINO",
     "FQL",
+    "ValueFlows",
     "CQL",
     "DAgger",
     "DDPG",
     "DiffusionBC",
+    "DiffusionCMDistillOnline",
     "DPPO",
+    "DreamerV3",
     "EDAC",
     "ExPLORe",
     "GAIL",
@@ -92,12 +110,16 @@ __all__ = [
     "JSRL",
     "Lancet",
     "LancetV1",
+    "MeanFlowBC",
     "OfflineEnvSpec",
     "OfflinePretrainResult",
     "OfflineRLAlgorithm",
     "OfflineSAC",
     "Off2OnAWAC",
     "Off2OnCalQL",
+    "Off2OnFloQ",
+    "Off2OnFINO",
+    "Off2OnValueFlows",
     "Off2OnIQL",
     "Off2OnSPOT",
     "OffPolicyAlgorithm",
@@ -129,7 +151,8 @@ __all__ = [
     "TDMPC2Multitask",
     "TransformerPPO",
     "TransformerSAC",
-    "VisionDiffusionBC",
+    "UniO4",
+    "UniO4OPE",
     "WSRL",
     "infer_box_specs_from_h5",
     "infer_specs_from_h5",

@@ -2,28 +2,41 @@
 
 from __future__ import annotations
 
+import dataclasses
 import warnings
 from typing import Any, Iterator, Literal, Optional, Sequence
 
 import numpy as np
 import torch
 import torch.nn.functional as F
-from gymnasium import spaces
 
+from rl_garden.algorithms._observation import EncoderSharing
 from rl_garden.algorithms.on_policy import OnPolicyAlgorithm
-from rl_garden.buffers.rollout_buffer import DictRolloutBuffer, RolloutBuffer, RolloutBufferSample
+from rl_garden.buffers.rollout_buffer import RolloutBuffer, RolloutBufferSample
 from rl_garden.common.ddp import allreduce_grads, allreduce_mean, is_ddp_active
 from rl_garden.common.logger import Logger
 from rl_garden.common.optim import ScheduleType, make_lr_scheduler, make_optimizer
-from rl_garden.encoders.base import BaseFeaturesExtractor
-from rl_garden.encoders.combined import (
-    CombinedExtractor,
-    ImageEncoderFactory,
-    default_image_encoder_factory,
-)
-from rl_garden.encoders.flatten import FlattenExtractor
+from rl_garden.encoders.config import EncoderConfig
 from rl_garden.networks.actor_critic import gaussian_kl_divergence
+from rl_garden.observations import ObsGroups
 from rl_garden.policies.ppo_policy import PPOPolicy
+
+
+def ppo_clip_policy_loss(
+    advantages: torch.Tensor,
+    ratio: torch.Tensor,
+    clip_coef: float,
+) -> torch.Tensor:
+    """PPO's clipped surrogate objective: ``mean(max(-adv*ratio, -adv*clip(ratio)))``.
+
+    Shared between ``PPO._policy_loss`` and ``BPPOCore`` (``bppo.py``) --
+    BPPO reuses only this formula, not ``_ppo_minibatch_update``, since it
+    normalizes/omega-weights advantages in a different order and has no
+    rollout buffer or value-clipping to hook into.
+    """
+    pg_loss1 = -advantages * ratio
+    pg_loss2 = -advantages * torch.clamp(ratio, 1 - clip_coef, 1 + clip_coef)
+    return torch.max(pg_loss1, pg_loss2).mean()
 
 
 class PPO(OnPolicyAlgorithm):
@@ -32,10 +45,10 @@ class PPO(OnPolicyAlgorithm):
     _compatible_checkpoint_algorithms = ("PPO",)
     _SUPPORTED_POLICY_KWARGS = frozenset(
         {
-            "features_extractor_class",
-            "features_extractor_kwargs",
-            "critic_features_extractor_class",
-            "critic_features_extractor_kwargs",
+            "actor_extractor_class",
+            "actor_extractor_kwargs",
+            "critic_extractor_class",
+            "critic_extractor_kwargs",
         }
     )
 
@@ -68,19 +81,14 @@ class PPO(OnPolicyAlgorithm):
         desired_kl: float = 0.01,
         adaptive_lr_min: float = 1e-5,
         adaptive_lr_max: float = 1e-2,
-        normalize_obs: bool = False,
         net_arch: Optional[Sequence[int] | dict[str, Sequence[int]]] = None,
         actor_hidden_dims: Optional[Sequence[int]] = None,
         value_hidden_dims: Optional[Sequence[int]] = None,
         log_std_init: float = -0.5,
-        image_encoder_factory: Optional[ImageEncoderFactory] = None,
-        image_keys: Optional[tuple[str, ...]] = None,
-        state_key: Optional[str] = None,
-        use_proprio: Optional[bool] = None,
-        proprio_latent_dim: Optional[int] = None,
-        image_fusion_mode: Optional[str] = None,
-        enable_stacking: Optional[bool] = None,
-        detach_encoder_on_actor: Optional[bool] = None,
+        encoder_config: Optional[EncoderConfig] = None,
+        obs_groups: Optional[ObsGroups] = None,
+        critic_encoder_config: Optional[EncoderConfig] = None,
+        encoder_sharing: Optional[EncoderSharing] = None,
         policy_kwargs: Optional[dict[str, Any]] = None,
         actor_use_layer_norm: bool = False,
         value_use_layer_norm: bool = False,
@@ -182,7 +190,6 @@ class PPO(OnPolicyAlgorithm):
         self.desired_kl = desired_kl
         self.adaptive_lr_min = adaptive_lr_min
         self.adaptive_lr_max = adaptive_lr_max
-        self.normalize_obs = normalize_obs
         self.net_arch = self._resolve_net_arch(
             net_arch=net_arch,
             actor_hidden_dims=actor_hidden_dims,
@@ -200,80 +207,29 @@ class PPO(OnPolicyAlgorithm):
         self.backbone_type = backbone_type
         self.critic_backbone_type = critic_backbone_type
 
-        obs_space = self.env.single_observation_space
-        image_kwargs_explicit = {
-            "image_encoder_factory": image_encoder_factory,
-            "image_keys": image_keys,
-            "state_key": state_key,
-            "use_proprio": use_proprio,
-            "proprio_latent_dim": proprio_latent_dim,
-            "image_fusion_mode": image_fusion_mode,
-            "enable_stacking": enable_stacking,
-        }
-        explicitly_set = [k for k, v in image_kwargs_explicit.items() if v is not None]
-        if isinstance(obs_space, spaces.Box):
-            if explicitly_set:
-                raise ValueError(
-                    "PPO with Box observation space does not accept image-related "
-                    f"kwargs (got {explicitly_set}). Use Dict observations instead."
-                )
-            self._is_dict_obs = False
-            self.detach_encoder_on_actor = (
-                False if detach_encoder_on_actor is None else detach_encoder_on_actor
-            )
-        elif isinstance(obs_space, spaces.Dict):
-            self._is_dict_obs = True
-            self.detach_encoder_on_actor = (
-                True if detach_encoder_on_actor is None else detach_encoder_on_actor
-            )
-            self._image_encoder_factory = (
-                image_encoder_factory or default_image_encoder_factory()
-            )
-            self._image_keys = (
-                image_keys if image_keys is not None else ("rgb", "depth")
-            )
-            self._state_key = state_key if state_key is not None else "state"
-            self._use_proprio = use_proprio if use_proprio is not None else True
-            self._proprio_latent_dim = (
-                proprio_latent_dim if proprio_latent_dim is not None else 64
-            )
-            self._image_fusion_mode = (
-                image_fusion_mode if image_fusion_mode is not None else "stack_channels"
-            )
-            self._enable_stacking = (
-                enable_stacking if enable_stacking is not None else False
-            )
-        else:
-            raise TypeError(
-                f"PPO supports Box or Dict observations, got {type(obs_space)}"
-            )
+        self.encoder_sharing = encoder_sharing
+        self.encoder_config = encoder_config
+        self.obs_groups = obs_groups
+        self.critic_encoder_config = critic_encoder_config
 
         self.policy_kwargs = self._normalize_policy_kwargs(policy_kwargs)
         self._setup_model()
-
-    def _actor_stop_gradient(self) -> bool:
-        # detach_encoder_on_actor only makes sense when the encoder is
-        # shared with the value head (it trains via value loss instead).
-        # With a separate critic_features_extractor, features_extractor is
-        # actor-exclusive and needs the actor loss's gradient -- nothing
-        # else would ever train it -- so the detach request is ignored in
-        # that case rather than silently leaving it at random init.
-        if self.policy.critic_features_extractor is not self.policy.features_extractor:
-            return False
-        return bool(self.detach_encoder_on_actor)
 
     def _rollout_policy(
         self, obs
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         policy_obs = self._obs_to_policy_device(obs)
-        self.policy.update_obs_normalizer(policy_obs)
+        self.policy.update_normalizer(policy_obs)
+        # No explicit stop_gradient_actor: PPOPolicy applies
+        # BasePolicy.extract_actor_features's encoder_sharing rule by
+        # default (see rl_garden/policies/base.py); both call sites are
+        # under torch.no_grad() anyway (rollout, no training gradients).
         if self.lr_schedule == "adaptive_kl":
             with torch.no_grad():
                 actions, values, log_prob, entropy, mean, log_std = (
                     self.policy.act_with_value_logprob_and_dist_params(
                         policy_obs,
                         deterministic=False,
-                        stop_gradient_actor=self._actor_stop_gradient(),
                     )
                 )
             self._rollout_mean, self._rollout_log_std = mean, log_std
@@ -282,7 +238,6 @@ class PPO(OnPolicyAlgorithm):
             return self.policy(
                 policy_obs,
                 deterministic=False,
-                stop_gradient_actor=self._actor_stop_gradient(),
             )
 
     def _extra_rollout_buffer_kwargs(self) -> dict:
@@ -313,22 +268,22 @@ class PPO(OnPolicyAlgorithm):
             "desired_kl": self.desired_kl,
             "adaptive_lr_min": self.adaptive_lr_min,
             "adaptive_lr_max": self.adaptive_lr_max,
-            "normalize_obs": self.normalize_obs,
             "net_arch": self.net_arch,
             "log_std_init": self.log_std_init,
-            "detach_encoder_on_actor": self.detach_encoder_on_actor,
+            "encoder_sharing": self.encoder_sharing,
+            "encoder_sharing_origin": self.encoder_sharing_origin,
+            "encoder_config": (
+                dataclasses.asdict(self.encoder_config) if self.encoder_config is not None else None
+            ),
+            "obs_groups": (
+                dataclasses.asdict(self.obs_groups) if self.obs_groups is not None else None
+            ),
+            "critic_encoder_config": (
+                dataclasses.asdict(self.critic_encoder_config)
+                if self.critic_encoder_config is not None
+                else None
+            ),
         }
-        if self._is_dict_obs:
-            meta.update(
-                {
-                    "image_keys": self._image_keys,
-                    "state_key": self._state_key,
-                    "use_proprio": self._use_proprio,
-                    "proprio_latent_dim": self._proprio_latent_dim,
-                    "image_fusion_mode": self._image_fusion_mode,
-                    "enable_stacking": self._enable_stacking,
-                }
-            )
         return meta
 
     def _extra_checkpoint_state(self) -> dict[str, Any]:
@@ -384,118 +339,25 @@ class PPO(OnPolicyAlgorithm):
             return {"pi": pi_arch, "vf": vf_arch}
         return [256, 256, 256]
 
-    def _default_features_extractor_class(self) -> type[BaseFeaturesExtractor]:
-        obs_space = self.env.single_observation_space
-        if isinstance(obs_space, spaces.Box):
-            return FlattenExtractor
-        if isinstance(obs_space, spaces.Dict):
-            return CombinedExtractor
-        raise TypeError(f"PPO supports Box or Dict observations, got {type(obs_space)}")
-
-    def _default_features_extractor_kwargs(self) -> dict[str, Any]:
-        if self._is_dict_obs:
-            return {
-                "image_keys": self._image_keys,
-                "state_key": self._state_key,
-                "image_encoder_factory": self._image_encoder_factory,
-                "proprio_latent_dim": self._proprio_latent_dim,
-                "use_proprio": self._use_proprio,
-                "fusion_mode": self._image_fusion_mode,
-                "enable_stacking": self._enable_stacking,
-                "normalize_obs": self.normalize_obs,
-            }
-        return {"normalize_obs": self.normalize_obs}
-
     def _normalize_policy_kwargs(
         self, policy_kwargs: Optional[dict[str, Any]]
     ) -> dict[str, Any]:
         normalized = dict(policy_kwargs or {})
-        unknown_keys = sorted(set(normalized) - self._SUPPORTED_POLICY_KWARGS)
-        if unknown_keys:
+        unsupported = sorted(set(normalized) - self._SUPPORTED_POLICY_KWARGS)
+        if unsupported:
             raise ValueError(
                 "Unsupported policy_kwargs keys: "
-                + ", ".join(unknown_keys)
-                + ". Supported keys are: features_extractor_class, "
-                + "features_extractor_kwargs, critic_features_extractor_class, "
-                + "critic_features_extractor_kwargs."
+                + ", ".join(unsupported)
+                + ". Supported keys are: "
+                + ", ".join(sorted(self._SUPPORTED_POLICY_KWARGS))
+                + "."
             )
-        for key in ("features_extractor_kwargs", "critic_features_extractor_kwargs"):
-            kwargs = normalized.get(key)
-            if kwargs is None:
-                continue
-            if not isinstance(kwargs, dict):
-                raise TypeError(f"policy_kwargs[{key!r}] must be a dict.")
-            normalized[key] = dict(kwargs)
-        normalized.setdefault("features_extractor_kwargs", {})
         return normalized
 
-    def _resolve_policy_kwargs(self) -> dict[str, Any]:
-        default_class = self._default_features_extractor_class()
-        default_kwargs = dict(self._default_features_extractor_kwargs())
-        resolved = {
-            "features_extractor_class": default_class,
-            "features_extractor_kwargs": default_kwargs,
-        }
-        if "features_extractor_class" in self.policy_kwargs:
-            resolved["features_extractor_class"] = self.policy_kwargs[
-                "features_extractor_class"
-            ]
-            if resolved["features_extractor_class"] is not default_class:
-                resolved["features_extractor_kwargs"] = {}
-        if "features_extractor_kwargs" in self.policy_kwargs:
-            if resolved["features_extractor_class"] is default_class:
-                resolved["features_extractor_kwargs"] = {
-                    **resolved["features_extractor_kwargs"],
-                    **self.policy_kwargs["features_extractor_kwargs"],
-                }
-            else:
-                resolved["features_extractor_kwargs"] = dict(
-                    self.policy_kwargs["features_extractor_kwargs"]
-                )
-        return resolved
-
-    def _build_features_extractor(self) -> BaseFeaturesExtractor:
-        resolved = self._resolve_policy_kwargs()
-        features_extractor_class = resolved["features_extractor_class"]
-        if not isinstance(features_extractor_class, type) or not issubclass(
-            features_extractor_class, BaseFeaturesExtractor
-        ):
-            raise TypeError(
-                "policy_kwargs['features_extractor_class'] must be a "
-                "BaseFeaturesExtractor subclass."
-            )
-        return features_extractor_class(
-            observation_space=self.env.single_observation_space,
-            **resolved["features_extractor_kwargs"],
-        )
-
-    def _build_critic_features_extractor(self) -> Optional[BaseFeaturesExtractor]:
-        """A second extractor for PPO's value head, only when policy_kwargs
-        explicitly asked for one -- otherwise ``None`` so PPOPolicy falls
-        back to sharing ``features_extractor`` (today's exact behavior)."""
-        critic_class = self.policy_kwargs.get("critic_features_extractor_class")
-        if critic_class is None:
-            return None
-        if not isinstance(critic_class, type) or not issubclass(
-            critic_class, BaseFeaturesExtractor
-        ):
-            raise TypeError(
-                "policy_kwargs['critic_features_extractor_class'] must be a "
-                "BaseFeaturesExtractor subclass."
-            )
-        critic_kwargs = self.policy_kwargs.get("critic_features_extractor_kwargs") or {}
-        return critic_class(
-            observation_space=self.env.single_observation_space,
-            **critic_kwargs,
-        )
-
     def _setup_model(self) -> None:
-        features_extractor = self._build_features_extractor()
-        critic_features_extractor = self._build_critic_features_extractor()
         self.policy = PPOPolicy(
             observation_space=self.env.single_observation_space,
             action_space=self.env.single_action_space,
-            features_extractor=features_extractor,
             net_arch=self.net_arch,
             log_std_init=self.log_std_init,
             actor_use_layer_norm=self.actor_use_layer_norm,
@@ -507,8 +369,8 @@ class PPO(OnPolicyAlgorithm):
             value_dropout_rate=self.value_dropout_rate,
             kernel_init=self.kernel_init,
             backbone_type=self.backbone_type,
-            critic_features_extractor=critic_features_extractor,
             critic_backbone_type=self.critic_backbone_type,
+            **self._policy_extractor_kwargs(self.env.single_observation_space),
         ).to(self.device)
         self.policy_optimizer = make_optimizer(
             self.policy.parameters(),
@@ -527,8 +389,7 @@ class PPO(OnPolicyAlgorithm):
                 min_lr_ratio=self.lr_min_ratio,
             )
         )
-        buffer_cls = DictRolloutBuffer if self._is_dict_obs else RolloutBuffer
-        self.rollout_buffer = buffer_cls(
+        self.rollout_buffer = RolloutBuffer(
             observation_space=self.env.single_observation_space,
             action_space=self.env.single_action_space,
             num_steps=self.num_steps,
@@ -559,11 +420,7 @@ class PPO(OnPolicyAlgorithm):
         ratio: torch.Tensor,
         clip_coef: float,
     ) -> torch.Tensor:
-        # TODO(agent): BPPO/Uni-O4 can override this hook to inject behavior-policy
-        # advantages, asymmetric advantage weighting, or KL regularization.
-        pg_loss1 = -advantages * ratio
-        pg_loss2 = -advantages * torch.clamp(ratio, 1 - clip_coef, 1 + clip_coef)
-        return torch.max(pg_loss1, pg_loss2).mean()
+        return ppo_clip_policy_loss(advantages, ratio, clip_coef)
 
     def _ppo_minibatch_update(
         self,
@@ -662,17 +519,15 @@ class PPO(OnPolicyAlgorithm):
         """Returns 1-D (values, log_prob, entropy, old_values, old_log_prob,
         advantages, returns, old_mean, old_log_std, new_mean, new_log_std).
         The last four are ``None`` unless ``lr_schedule == "adaptive_kl"``."""
+        # No explicit stop_gradient_actor: PPOPolicy applies
+        # BasePolicy.extract_actor_features's encoder_sharing rule by default.
         if self.lr_schedule == "adaptive_kl":
             values, log_prob, entropy, new_mean, new_log_std = (
-                self.policy.evaluate_actions_with_dist_params(
-                    data.obs, data.actions, stop_gradient_actor=self._actor_stop_gradient()
-                )
+                self.policy.evaluate_actions_with_dist_params(data.obs, data.actions)
             )
             old_mean, old_log_std = data.old_mean, data.old_log_std
         else:
-            values, log_prob, entropy = self.policy.evaluate_actions(
-                data.obs, data.actions, stop_gradient_actor=self._actor_stop_gradient()
-            )
+            values, log_prob, entropy = self.policy.evaluate_actions(data.obs, data.actions)
             new_mean = new_log_std = old_mean = old_log_std = None
         return (
             values.flatten(), log_prob.flatten(), entropy.flatten(),

@@ -10,11 +10,6 @@ WSRL's warmup-then-discard preset.
 from dataclasses import dataclass
 from typing import Literal
 
-from rl_garden.common.cli_args import (
-    image_encoder_factory_from_args,
-    image_keys_from_env,
-    vit_sac_kwargs_from_args,
-)
 from rl_garden.common.env_args import EnvBackendArgs
 from rl_garden.training.off2on._args import (
     VisionIQLOff2OnTrainingArgs,
@@ -27,31 +22,29 @@ from rl_garden.training.off2on._registry import registry
 class IQLOff2OnArgs(VisionIQLOff2OnTrainingArgs, EnvBackendArgs):
     """IQL off2on args: no warmup, mixed replay, adaptive ratio.
 
-    For state obs pass --obs_mode state.
+    State-only observations by default; pass ``--obs.rgb <camera>`` for
+    Dict/RGBD observations.
     """
 
     warmup_steps: int = 0
     online_replay_mode: Literal["empty", "append", "mixed"] = "mixed"
     offline_data_ratio: float | str = "auto"
-    bootstrap_at_done: Literal["always", "never", "truncated"] = "always"
+    bootstrap_at_done: Literal["always", "never", "truncated"] = "truncated"
     num_eval_episodes: int | None = None
 
 
 def build_iql(args: IQLOff2OnArgs, env, eval_env, logger, checkpoint_dir):
+    from rl_garden.common.cli_args import resolve_critic_encoder_config, resolve_obs_groups_config
     from rl_garden.algorithms import Off2OnIQL
     from rl_garden.training.inspection import construct_agent
 
-    is_visual = args.obs_mode != "state"
-    image_kwargs: dict = {}
-    if is_visual:
-        factory = image_encoder_factory_from_args(args)
-        image_keys = image_keys_from_env(env, args)
-        image_kwargs = dict(
-            image_keys=image_keys,
-            image_encoder_factory=factory,
-            image_fusion_mode=args.image_fusion_mode,
-            **vit_sac_kwargs_from_args(args, image_keys),
-        )
+    image_kwargs: dict = {
+        "encoder_config": args.encoder if args.obs.is_visual else None,
+        "obs_groups": resolve_obs_groups_config(args),
+        "critic_encoder_config": resolve_critic_encoder_config(args),
+    }
+    if args.encoder_sharing is not None:
+        image_kwargs["encoder_sharing"] = args.encoder_sharing
 
     agent = construct_agent(
         Off2OnIQL,
@@ -124,4 +117,11 @@ def run_iql(args: IQLOff2OnArgs) -> None:
     run_off2on(args, build_agent=build_iql, algorithm="iql")
 
 
-registry.register("iql", IQLOff2OnArgs, run_iql)
+
+
+def _off2_on_iql_algorithm_cls() -> type:
+    from rl_garden.algorithms import Off2OnIQL
+
+    return Off2OnIQL
+
+registry.register("iql", IQLOff2OnArgs, run_iql, algorithm_cls=_off2_on_iql_algorithm_cls)

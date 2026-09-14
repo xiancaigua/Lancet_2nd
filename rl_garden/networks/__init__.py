@@ -14,6 +14,7 @@ from rl_garden.networks.behavior_vae import BehaviorVAE
 from rl_garden.networks.bigru_sequence_encoder import BiGRUSequenceEncoder
 from rl_garden.networks.conditional_vae import ConditionalVAE
 from rl_garden.networks.diffusion_mlp import DiffusionMLP, build_diffusion_mlp_head
+from rl_garden.networks.diffusion_unet import DiffusionUNet1D
 from rl_garden.networks.flash_sac_layers import (
     EnsembleCategoricalValue,
     EnsembleFlashSACBlock,
@@ -32,6 +33,11 @@ from rl_garden.networks.flow_actor import FlowMatchingActor
 from rl_garden.networks.goal_conditioned_value import GoalConditionedPhiValue
 from rl_garden.networks.gtrxl import GTrXLLatentEncoder, GTrXLState
 from rl_garden.networks.latent_actor import LatentActor
+from rl_garden.networks.mean_flow_field import (
+    MeanFlowActorField,
+    MeanFlowMode,
+    mean_flow_loss_from_samples,
+)
 from rl_garden.networks.mlp import Activation, KernelInit, MLPResNet, create_mlp
 from rl_garden.networks.opal_vae import OPALVAE
 from rl_garden.networks.perturbation_actor import PerturbationActor
@@ -56,6 +62,7 @@ __all__ = [
     "DeterministicTanhActor",
     "DiagGaussianActor",
     "DiffusionMLP",
+    "DiffusionUNet1D",
     "EnsembleCategoricalValue",
     "EnsembleFlashSACBlock",
     "EnsembleFlashSACEmbedder",
@@ -71,6 +78,8 @@ __all__ = [
     "GTrXLState",
     "KernelInit",
     "LatentActor",
+    "MeanFlowActorField",
+    "MeanFlowMode",
     "MLPResNet",
     "NormalTanhPolicy",
     "OPALVAE",
@@ -93,5 +102,6 @@ __all__ = [
     "build_diffusion_mlp_head",
     "create_mlp",
     "gaussian_kl_divergence",
+    "mean_flow_loss_from_samples",
     "get_actor_critic_arch",
 ]

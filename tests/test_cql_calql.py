@@ -14,11 +14,11 @@ from rl_garden.algorithms import CQL, WSRL, CalQL, OfflineEnvSpec, OfflineRLAlgo
 from rl_garden.algorithms import __all__ as algorithm_exports
 from rl_garden.algorithms.calql import _CalQLRolloutTrainingShell
 from rl_garden.algorithms.cql import CQLAlphaLagrange
-from rl_garden.buffers.dict_buffer import DictReplayBuffer
-from rl_garden.buffers.mc_buffer import MCDictReplayBuffer, MCTensorReplayBuffer
-from rl_garden.buffers.tensor_buffer import TensorReplayBuffer
+from rl_garden.buffers.replay_buffer import ReplayBuffer
+from rl_garden.buffers.mc_buffer import MCReplayBuffer
 from rl_garden.common import Logger
 from rl_garden.encoders.combined import CombinedExtractor
+from rl_garden.encoders.config import EncoderConfig
 from rl_garden.training.offline.cql import CQLArgs, _cql_kwargs
 
 
@@ -61,10 +61,22 @@ def _offline_kwargs() -> dict[str, object]:
 def _fill(agent, steps: int = 8) -> None:
     # Marks the final step done=True so the run is one complete trajectory --
     # the MC buffer only samples/counts complete trajectories.
+    # env.single_observation_space is Dict({"state": Box}) -- OfflineEnvSpec's
+    # bare Box is boundary-normalized by BaseAlgorithm.__init__ (see
+    # rl_garden.envs.wrappers.VectorizedDictStateWrapper) -- but
+    # use_sarsa_reference=True's SarsaMCReplayBuffer stores Dict too, so
+    # every branch feeds dict-shaped obs (kept generic via DictArray check
+    # for parity with every other test file's _fill helper).
+    from rl_garden.buffers.replay_buffer import DictArray
+
     env = agent.env
+    state_shape = env.single_observation_space["state"].shape
+    buffer_is_dict = isinstance(agent.replay_buffer.obs, DictArray)
     for step in range(steps):
-        obs = torch.randn(env.num_envs, *env.single_observation_space.shape)
-        next_obs = torch.randn_like(obs)
+        state = torch.randn(env.num_envs, *state_shape)
+        next_state = torch.randn_like(state)
+        obs = {"state": state} if buffer_is_dict else state
+        next_obs = {"state": next_state} if buffer_is_dict else next_state
         actions = torch.randn(env.num_envs, *env.single_action_space.shape).clamp(-1, 1)
         rewards = torch.randn(env.num_envs)
         dones = (
@@ -86,7 +98,7 @@ def _dict_offline_env(num_envs: int = 2) -> OfflineEnvSpec:
     return OfflineEnvSpec(
         spaces.Dict(
             {
-                "rgb": spaces.Box(0, 255, shape=(64, 64, 3), dtype=np.uint8),
+                "rgb_cam": spaces.Box(0, 255, shape=(64, 64, 3), dtype=np.uint8),
                 "state": spaces.Box(-np.inf, np.inf, shape=(4,), dtype=np.float32),
             }
         ),
@@ -101,11 +113,11 @@ def _fill_dict(agent, steps: int = 4) -> None:
     env = agent.env
     for step in range(steps):
         obs = {
-            "rgb": torch.randint(0, 256, (env.num_envs, 64, 64, 3), dtype=torch.uint8),
+            "rgb_cam": torch.randint(0, 256, (env.num_envs, 64, 64, 3), dtype=torch.uint8),
             "state": torch.randn(env.num_envs, 4),
         }
         next_obs = {
-            "rgb": torch.randint(0, 256, (env.num_envs, 64, 64, 3), dtype=torch.uint8),
+            "rgb_cam": torch.randint(0, 256, (env.num_envs, 64, 64, 3), dtype=torch.uint8),
             "state": torch.randn(env.num_envs, 4),
         }
         actions = torch.randn(env.num_envs, *env.single_action_space.shape).clamp(-1, 1)
@@ -123,11 +135,7 @@ def _dict_arch_kwargs() -> dict[str, object]:
         "critic_subsample_size": 2,
         "cql_n_actions": 3,
         "cql_alpha": 1.0,
-        "image_keys": ("rgb",),
-        "image_fusion_mode": "stack_channels",
-        "proprio_latent_dim": 16,
-        "use_proprio": True,
-        "enable_stacking": False,
+        "encoder_config": EncoderConfig(image_fusion_mode="stack_channels", proprio_latent_dim=16),
         "backbone_type": "mlp",
         "std_parameterization": "exp",
         "actor_use_layer_norm": True,
@@ -154,8 +162,8 @@ def test_cql_standalone_train_step_without_calql_bound():
 def test_cql_does_not_own_calql_or_wsrl_flow_state():
     agent = CQL(env=_offline_env(), **_offline_kwargs())
 
-    assert isinstance(agent.replay_buffer, TensorReplayBuffer)
-    assert not isinstance(agent.replay_buffer, MCTensorReplayBuffer)
+    assert isinstance(agent.replay_buffer, ReplayBuffer)
+    assert not isinstance(agent.replay_buffer, MCReplayBuffer)
     assert not hasattr(agent, "switch_to_online_mode")
     assert not hasattr(agent, "offline_replay_buffer")
     assert not hasattr(agent, "offline_data_ratio")
@@ -168,7 +176,10 @@ def test_cql_accepts_and_wires_eval_env_constructor_args():
         env=_offline_env(), eval_env=eval_env, eval_freq=5, num_eval_steps=3, **kwargs
     )
 
-    assert agent.eval_env is eval_env
+    # eval_env's bare Box space is boundary-normalized to Dict (see _fill's
+    # docstring), so agent.eval_env is a VectorizedDictStateWrapper around
+    # the original object rather than the object itself.
+    assert agent.eval_env.env is eval_env
     assert agent.eval_freq == 5
     assert agent.num_eval_steps == 3
 
@@ -265,8 +276,8 @@ def test_off2on_calql_and_wsrl_thread_all_three_cql_parity_axes():
 
     env = MagicMock()
     env.num_envs = 2
-    env.single_observation_space = spaces.Box(low=-1, high=1, shape=(4,), dtype=float)
-    env.single_action_space = spaces.Box(low=-1, high=1, shape=(2,), dtype=float)
+    env.single_observation_space = spaces.Box(low=-1, high=1, shape=(4,), dtype=np.float32)
+    env.single_action_space = spaces.Box(low=-1, high=1, shape=(2,), dtype=np.float32)
     flags = {
         "cql_diff_clip_mode": "always",
         "cql_penalty_scale": "lagrange_times_alpha",
@@ -340,8 +351,8 @@ def test_cql_train_step_and_checkpoint(tmp_path):
     info = agent.train(1, compute_info=True)
     result = agent.learn_offline(2, save_filename="offline_cql.pt")
 
-    assert isinstance(agent.replay_buffer, TensorReplayBuffer)
-    assert not isinstance(agent.replay_buffer, MCTensorReplayBuffer)
+    assert isinstance(agent.replay_buffer, ReplayBuffer)
+    assert not isinstance(agent.replay_buffer, MCReplayBuffer)
     assert "cql_loss" in info
     assert "calql_bound_rate" not in info
     assert result.final_checkpoint == tmp_path / "offline_cql.pt"
@@ -364,7 +375,7 @@ def test_calql_standalone_train_step_logs_bound_rate():
 def test_calql_owns_mc_replay_without_wsrl_flow_state():
     agent = CalQL(env=_offline_env(), **_offline_kwargs())
 
-    assert isinstance(agent.replay_buffer, MCTensorReplayBuffer)
+    assert isinstance(agent.replay_buffer, MCReplayBuffer)
     assert not hasattr(agent, "switch_to_online_mode")
     assert not hasattr(agent, "offline_replay_buffer")
     assert not hasattr(agent, "offline_data_ratio")
@@ -382,17 +393,129 @@ def test_calql_train_step_logs_bound_rate():
 
     info = agent.train(1, compute_info=True)
 
-    assert isinstance(agent.replay_buffer, MCTensorReplayBuffer)
+    assert isinstance(agent.replay_buffer, MCReplayBuffer)
     assert agent.replay_buffer.sparse_reward_mc
     assert agent.replay_buffer.sparse_negative_reward == -1.0
     assert "cql_loss" in info
     assert "calql_bound_rate" in info
 
 
+def test_calql_default_does_not_build_sarsa_reference_network():
+    agent = CalQL(env=_offline_env(), **_offline_kwargs())
+
+    assert agent.use_sarsa_reference is False
+    assert agent.sarsa_q_net is None
+    assert agent.sarsa_q_target is None
+    assert agent.sarsa_q_optimizer is None
+    assert agent._extra_batch_slice_keys == ()
+    assert isinstance(agent.replay_buffer, MCReplayBuffer)
+
+
+def test_calql_sarsa_reference_builds_network_and_uses_sarsa_buffer():
+    from rl_garden.buffers.sarsa_buffer import SarsaMCReplayBuffer
+
+    agent = CalQL(
+        env=_offline_env(),
+        use_sarsa_reference=True,
+        sarsa_hidden_dims=(16,),
+        **_offline_kwargs(),
+    )
+
+    assert agent.sarsa_q_net is not None
+    assert agent.sarsa_q_target is not None
+    assert agent.sarsa_q_optimizer is not None
+    assert agent._extra_batch_slice_keys == ("next_actions", "next_action_valid")
+    assert isinstance(agent.replay_buffer, SarsaMCReplayBuffer)
+
+
+def test_calql_sarsa_reference_dict_obs_raises():
+    with pytest.raises(ValueError, match="does not support image observations"):
+        CalQL(
+            env=_dict_offline_env(),
+            use_sarsa_reference=True,
+            **_offline_kwargs(),
+        )
+
+
+def test_calql_sarsa_reference_train_step_updates_sarsa_net_and_logs_loss():
+    agent = CalQL(
+        env=_offline_env(),
+        use_sarsa_reference=True,
+        sarsa_hidden_dims=(16,),
+        **_offline_kwargs(),
+    )
+    _fill(agent)
+    before = [p.clone() for p in agent.sarsa_q_net.parameters()]
+
+    info = agent.train(1, compute_info=True)
+
+    after = list(agent.sarsa_q_net.parameters())
+    assert any(not torch.equal(b, a) for b, a in zip(before, after))
+    assert "sarsa_loss" in info
+    assert torch.isfinite(torch.tensor(info["sarsa_loss"]))
+    assert "calql_bound_rate" in info
+
+
+def test_calql_sarsa_reference_regularizer_uses_sarsa_net_not_mc_returns():
+    agent = CalQL(
+        env=_offline_env(),
+        use_sarsa_reference=True,
+        sarsa_hidden_dims=(16,),
+        **_offline_kwargs(),
+    )
+    _fill(agent)
+    data = agent.replay_buffer.sample(agent.batch_size)
+    q_pred = agent._critic_forward(data.obs, data.actions, target=False)
+
+    # Corrupt mc_returns; the SARSA path must ignore it entirely.
+    import dataclasses
+
+    corrupted = dataclasses.replace(
+        data, mc_returns=torch.full_like(data.mc_returns, 1e6)
+    )
+    torch.manual_seed(0)
+    loss_normal, _ = agent._cql_regularizer(data, q_pred)
+    torch.manual_seed(0)
+    loss_corrupted, _ = agent._cql_regularizer(corrupted, q_pred)
+
+    assert torch.allclose(loss_normal, loss_corrupted)
+
+
+def test_calql_sarsa_reference_checkpoint_roundtrip(tmp_path):
+    """Regression for the ``_SarsaReferenceQ`` -> ``ScalarQNetwork``
+    promotion (rl_garden/networks/value.py): the extraction only moved the
+    class, so ``sarsa_q_net``'s state-dict keys (all under its ``net.``
+    submodule) must be unchanged and a checkpoint saved by one agent must
+    still load cleanly into a fresh one with matching parameters."""
+    agent = CalQL(
+        env=_offline_env(),
+        use_sarsa_reference=True,
+        sarsa_hidden_dims=(16,),
+        checkpoint_dir=str(tmp_path),
+        **_offline_kwargs(),
+    )
+    _fill(agent)
+    agent.train(1, compute_info=False)
+
+    sd = agent.sarsa_q_net.state_dict()
+    assert sd and all(key.startswith("net.") for key in sd)
+
+    ckpt = agent.save(tmp_path / "calql_sarsa.pt")
+    fresh = CalQL(
+        env=_offline_env(),
+        use_sarsa_reference=True,
+        sarsa_hidden_dims=(16,),
+        **_offline_kwargs(),
+    )
+    fresh.load(ckpt, load_replay_buffer=False)
+
+    for key, value in sd.items():
+        assert torch.equal(fresh.sarsa_q_net.state_dict()[key], value)
+
+
 def test_cql_dict_obs_train_step_and_checkpoint(tmp_path):
     agent = CQL(
         env=_dict_offline_env(),
-        image_keys=("rgb",),
         checkpoint_dir=str(tmp_path),
         **_offline_kwargs(),
     )
@@ -401,22 +524,114 @@ def test_cql_dict_obs_train_step_and_checkpoint(tmp_path):
     info = agent.train(1, compute_info=True)
     result = agent.learn_offline(2, save_filename="offline_cql_dict.pt")
 
-    assert isinstance(agent.replay_buffer, DictReplayBuffer)
-    assert isinstance(agent.policy.features_extractor, CombinedExtractor)
+    assert isinstance(agent.replay_buffer, ReplayBuffer)
+    assert isinstance(agent.policy.actor_extractor, CombinedExtractor)
     assert "cql_loss" in info
     assert torch.isfinite(torch.tensor(info["critic_loss"]))
     assert result.final_checkpoint == tmp_path / "offline_cql_dict.pt"
     assert (tmp_path / "offline_cql_dict.pt").exists()
 
 
+def _asymmetric_offline_env(num_envs: int = 2) -> OfflineEnvSpec:
+    return OfflineEnvSpec(
+        spaces.Dict(
+            {
+                "rgb_cam": spaces.Box(0, 255, shape=(64, 64, 3), dtype=np.uint8),
+                "state": spaces.Box(-np.inf, np.inf, shape=(4,), dtype=np.float32),
+                "state_object_pose": spaces.Box(-np.inf, np.inf, shape=(3,), dtype=np.float32),
+            }
+        ),
+        spaces.Box(low=-1.0, high=1.0, shape=(2,), dtype=np.float32),
+        num_envs=num_envs,
+    )
+
+
+def _fill_asymmetric(agent, steps: int = 4) -> None:
+    env = agent.env
+    for _ in range(steps):
+        obs = {
+            "rgb_cam": torch.randint(0, 256, (env.num_envs, 64, 64, 3), dtype=torch.uint8),
+            "state": torch.randn(env.num_envs, 4),
+            "state_object_pose": torch.randn(env.num_envs, 3),
+        }
+        next_obs = {
+            "rgb_cam": torch.randint(0, 256, (env.num_envs, 64, 64, 3), dtype=torch.uint8),
+            "state": torch.randn(env.num_envs, 4),
+            "state_object_pose": torch.randn(env.num_envs, 3),
+        }
+        actions = torch.randn(env.num_envs, *env.single_action_space.shape).clamp(-1, 1)
+        rewards = torch.randn(env.num_envs)
+        dones = torch.zeros(env.num_envs)
+        agent.replay_buffer.add(obs, next_obs, actions, rewards, dones)
+
+
+def test_cql_asymmetric_obs_groups_critic_sees_extra_state_actor_does_not():
+    """End-to-end asymmetric actor/critic encoders via state_<name>: critic
+    sees state_object_pose, actor does not, encoder_sharing="separate".
+    Asserts the actor extractor's schema lacks the key and, over one real
+    train() step, gradients reach only the right extractor."""
+    from rl_garden.observations import ObsGroups
+
+    kwargs = _offline_kwargs()
+    agent = CQL(
+        env=_asymmetric_offline_env(),
+        encoder_config=EncoderConfig(proprio_latent_dim=4),
+        obs_groups=ObsGroups(
+            actor=("rgb_cam", "state"), critic=("rgb_cam", "state", "state_object_pose")
+        ),
+        encoder_sharing="separate",
+        **kwargs,
+    )
+
+    actor_extractor = agent.policy.actor_extractor
+    critic_extractor = agent.policy.critic_extractor
+    assert critic_extractor is not None and critic_extractor is not actor_extractor
+    assert "state_object_pose" not in actor_extractor.state_keys
+    assert "state_object_pose" in critic_extractor.state_keys
+
+    _fill_asymmetric(agent)
+    data = agent.replay_buffer.sample(4)
+
+    actor_loss, _ = agent._actor_loss(data.obs)
+    actor_grad_on_actor = torch.autograd.grad(
+        actor_loss, list(actor_extractor.parameters()), retain_graph=True, allow_unused=True
+    )
+    assert any(g is not None and torch.any(g != 0) for g in actor_grad_on_actor)
+    # The actor loss's Q(s, pi(s)) term re-extracts critic-role features with
+    # stop_gradient=True (SACPolicy.critic_features_for); CombinedExtractor's
+    # own stop_gradient convention detaches only the image branch, so this
+    # checks image-branch isolation specifically, not the whole
+    # critic_extractor (its proprio branch legitimately still requires_grad
+    # here -- unrelated to obs_groups).
+    actor_grad_on_critic_image = torch.autograd.grad(
+        actor_loss, list(critic_extractor.image_encoder.parameters()), allow_unused=True
+    )
+    assert all(g is None for g in actor_grad_on_critic_image)
+
+    critic_loss, _ = agent._critic_loss(data)
+    critic_grad_on_critic = torch.autograd.grad(
+        critic_loss, list(critic_extractor.parameters()), allow_unused=True
+    )
+    assert any(g is not None and torch.any(g != 0) for g in critic_grad_on_critic)
+    # Unlike SAC, CQL's critic loss is not actor-independent: the CQL
+    # regularizer samples OOD actions from the current policy
+    # (_sample_n_actions_with_log_probs -> policy.extract_features, an
+    # undetached actor_extractor forward), so critic_loss legitimately has a
+    # live gradient path into actor_extractor too -- this is not a leak to
+    # guard against, just CQL's own regularizer design.
+
+    # A real end-to-end update step also runs cleanly.
+    info = agent.train(gradient_steps=1, compute_info=True)
+    assert torch.isfinite(torch.tensor(info["critic_loss"]))
+
+
 def test_calql_dict_obs_uses_mc_dict_replay_buffer():
     agent = CalQL(
         env=_dict_offline_env(),
-        image_keys=("rgb",),
         **_offline_kwargs(),
     )
 
-    assert isinstance(agent.replay_buffer, MCDictReplayBuffer)
+    assert isinstance(agent.replay_buffer, MCReplayBuffer)
 
 
 def test_calql_dict_obs_checkpoint_loads_into_wsrl(tmp_path):

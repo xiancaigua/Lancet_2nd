@@ -7,30 +7,27 @@ RL objective). Inherits ``OfflineRLAlgorithm`` and is wired into the same
 with ``FlowBCPolicy`` (``ActorVectorField``-based) swapped in for the
 Gaussian actor.
 
-Box observations use ``FlattenExtractor`` and Dict observations use
-``CombinedExtractor``, matching ``BC``'s convention exactly.
+The observation space is resolved through the shared observation-encoder
+mixin (``rl_garden.algorithms._observation``): a state-only space builds a
+``FlattenExtractor`` and a Dict space builds a ``CombinedExtractor``,
+selected by ``EncoderConfig``/``ObsGroups`` rather than an in-class
+``isinstance`` branch.
 """
 
 from __future__ import annotations
 
+import dataclasses
 from typing import Any, Literal, Optional, Sequence
 
 import torch
-from gymnasium import spaces
 
 from rl_garden.algorithms.offline import OfflineEnvSpec, OfflineRLAlgorithm
-from rl_garden.buffers.dict_buffer import DictReplayBuffer
-from rl_garden.buffers.tensor_buffer import TensorReplayBuffer
+from rl_garden.buffers.replay_buffer import ReplayBuffer
 from rl_garden.common.logger import Logger
 from rl_garden.common.optim import ScheduleType, make_lr_scheduler, make_optimizer
-from rl_garden.encoders.base import BaseFeaturesExtractor
-from rl_garden.encoders.combined import (
-    CombinedExtractor,
-    ImageEncoderFactory,
-    default_image_encoder_factory,
-)
-from rl_garden.encoders.flatten import FlattenExtractor
+from rl_garden.encoders.config import EncoderConfig
 from rl_garden.networks import Activation, KernelInit
+from rl_garden.observations import ObsGroups
 from rl_garden.policies.flow_bc_policy import FlowBCPolicy
 
 
@@ -40,8 +37,12 @@ class FlowBC(OfflineRLAlgorithm):
 
     _compatible_checkpoint_algorithms = ("FlowBC",)
     _SUPPORTED_POLICY_KWARGS = frozenset(
-        {"features_extractor_class", "features_extractor_kwargs"}
+        {"actor_extractor_class", "actor_extractor_kwargs"}
     )
+    # FlowBC has no critic, so extract_actor_features must never
+    # stop-gradient (the encoder is trained end-to-end by the actor loss) --
+    # see BC's identical class-attribute override for the full rationale.
+    encoder_sharing = "shared"
 
     def __init__(
         self,
@@ -64,13 +65,9 @@ class FlowBC(OfflineRLAlgorithm):
         actor_use_layer_norm: bool = False,
         kernel_init: Optional[KernelInit] = None,
         activation_fn: Optional[Activation] = None,
-        image_encoder_factory: Optional[ImageEncoderFactory] = None,
-        image_keys: Optional[tuple[str, ...]] = None,
-        state_key: Optional[str] = None,
-        use_proprio: Optional[bool] = None,
-        proprio_latent_dim: Optional[int] = None,
-        image_fusion_mode: Optional[str] = None,
-        enable_stacking: Optional[bool] = None,
+        encoder_config: Optional[EncoderConfig] = None,
+        obs_groups: Optional[ObsGroups] = None,
+        image_augmentation_seed: Optional[int] = None,
         policy_kwargs: Optional[dict[str, Any]] = None,
         seed: int = 1,
         device: str | torch.device = "auto",
@@ -126,47 +123,9 @@ class FlowBC(OfflineRLAlgorithm):
         self.kernel_init = kernel_init
         self.activation_fn = activation_fn
 
-        obs_space = self.env.single_observation_space
-        image_kwargs_explicit = {
-            "image_encoder_factory": image_encoder_factory,
-            "image_keys": image_keys,
-            "state_key": state_key,
-            "use_proprio": use_proprio,
-            "proprio_latent_dim": proprio_latent_dim,
-            "image_fusion_mode": image_fusion_mode,
-            "enable_stacking": enable_stacking,
-        }
-        explicitly_set = [k for k, v in image_kwargs_explicit.items() if v is not None]
-        if isinstance(obs_space, spaces.Box):
-            if explicitly_set:
-                raise ValueError(
-                    "FlowBC with Box observation space does not accept image-related "
-                    f"kwargs (got {explicitly_set}). Use Dict observations instead."
-                )
-            self._is_dict_obs = False
-        elif isinstance(obs_space, spaces.Dict):
-            self._is_dict_obs = True
-            self._image_encoder_factory = (
-                image_encoder_factory or default_image_encoder_factory()
-            )
-            self._image_keys = (
-                image_keys if image_keys is not None else ("rgb", "depth")
-            )
-            self._state_key = state_key if state_key is not None else "state"
-            self._use_proprio = use_proprio if use_proprio is not None else True
-            self._proprio_latent_dim = (
-                proprio_latent_dim if proprio_latent_dim is not None else 64
-            )
-            self._image_fusion_mode = (
-                image_fusion_mode if image_fusion_mode is not None else "stack_channels"
-            )
-            self._enable_stacking = (
-                enable_stacking if enable_stacking is not None else False
-            )
-        else:
-            raise TypeError(
-                f"FlowBC supports Box or Dict observation spaces, got {type(obs_space)}"
-            )
+        self.encoder_config = encoder_config
+        self.obs_groups = obs_groups
+        self._image_augmentation_seed = image_augmentation_seed
 
         self.policy_kwargs = self._normalize_policy_kwargs(policy_kwargs)
         self._setup_model()
@@ -189,18 +148,14 @@ class FlowBC(OfflineRLAlgorithm):
             "grad_clip_norm": self.grad_clip_norm,
             "net_arch": self.net_arch,
             "flow_steps": self.flow_steps,
+            "encoder_config": (
+                dataclasses.asdict(self.encoder_config) if self.encoder_config is not None else None
+            ),
+            "obs_groups": (
+                dataclasses.asdict(self.obs_groups) if self.obs_groups is not None else None
+            ),
+            "image_augmentation_seed": self._image_augmentation_seed,
         }
-        if self._is_dict_obs:
-            meta.update(
-                {
-                    "image_keys": self._image_keys,
-                    "state_key": self._state_key,
-                    "use_proprio": self._use_proprio,
-                    "proprio_latent_dim": self._proprio_latent_dim,
-                    "image_fusion_mode": self._image_fusion_mode,
-                    "enable_stacking": self._enable_stacking,
-                }
-            )
         return meta
 
     def _extra_checkpoint_state(self) -> dict[str, Any]:
@@ -221,16 +176,20 @@ class FlowBC(OfflineRLAlgorithm):
     # --- model setup ---
 
     def _setup_model(self) -> None:
-        features_extractor = self._build_features_extractor()
+        extractor_kwargs = self._policy_extractor_kwargs(
+            self.env.single_observation_space,
+            augmentation_seed=self._image_augmentation_seed,
+        )
         self.policy = FlowBCPolicy(
             observation_space=self.env.single_observation_space,
             action_space=self.env.single_action_space,
-            features_extractor=features_extractor,
+            actor_extractor=extractor_kwargs["actor_extractor"],
             net_arch=self.net_arch,
             use_layer_norm=self.actor_use_layer_norm,
             kernel_init=self.kernel_init,
             activation_fn=self.activation_fn,
             flow_steps=self.flow_steps,
+            encoder_sharing=extractor_kwargs["encoder_sharing"],
         ).to(self.device)
 
         self.actor_optimizer = make_optimizer(
@@ -308,104 +267,25 @@ class FlowBC(OfflineRLAlgorithm):
             list(self.policy.actor_parameters()), self.grad_clip_norm
         )
 
-    def _default_features_extractor_class(self) -> type[BaseFeaturesExtractor]:
-        obs_space = self.env.single_observation_space
-        if isinstance(obs_space, spaces.Box):
-            return FlattenExtractor
-        if isinstance(obs_space, spaces.Dict):
-            return CombinedExtractor
-        raise TypeError(
-            "FlowBC supports Box or Dict observation spaces, got " + str(type(obs_space))
-        )
-
-    def _default_features_extractor_kwargs(self) -> dict[str, Any]:
-        if self._is_dict_obs:
-            return {
-                "image_keys": self._image_keys,
-                "state_key": self._state_key,
-                "image_encoder_factory": self._image_encoder_factory,
-                "proprio_latent_dim": self._proprio_latent_dim,
-                "use_proprio": self._use_proprio,
-                "fusion_mode": self._image_fusion_mode,
-                "enable_stacking": self._enable_stacking,
-            }
-        return {}
-
     def _normalize_policy_kwargs(
         self, policy_kwargs: Optional[dict[str, Any]]
     ) -> dict[str, Any]:
         normalized = dict(policy_kwargs or {})
-        unknown_keys = sorted(set(normalized) - self._SUPPORTED_POLICY_KWARGS)
-        if unknown_keys:
+        unsupported = sorted(set(normalized) - self._SUPPORTED_POLICY_KWARGS)
+        if unsupported:
             raise ValueError(
                 "Unsupported policy_kwargs keys: "
-                + ", ".join(unknown_keys)
-                + ". Supported keys are: features_extractor_class, "
-                + "features_extractor_kwargs."
+                + ", ".join(unsupported)
+                + ". Supported keys are: "
+                + ", ".join(sorted(self._SUPPORTED_POLICY_KWARGS))
+                + "."
             )
-        features_extractor_kwargs = normalized.get("features_extractor_kwargs", {})
-        if features_extractor_kwargs is None:
-            features_extractor_kwargs = {}
-        if not isinstance(features_extractor_kwargs, dict):
-            raise TypeError(
-                "policy_kwargs['features_extractor_kwargs'] must be a dict."
-            )
-        normalized["features_extractor_kwargs"] = dict(features_extractor_kwargs)
         return normalized
 
-    def _resolve_policy_kwargs(self) -> dict[str, Any]:
-        default_class = self._default_features_extractor_class()
-        default_kwargs = dict(self._default_features_extractor_kwargs())
-        resolved = {
-            "features_extractor_class": default_class,
-            "features_extractor_kwargs": default_kwargs,
-        }
-        if "features_extractor_class" in self.policy_kwargs:
-            resolved["features_extractor_class"] = self.policy_kwargs[
-                "features_extractor_class"
-            ]
-            if resolved["features_extractor_class"] is not default_class:
-                resolved["features_extractor_kwargs"] = {}
-        if "features_extractor_kwargs" in self.policy_kwargs:
-            if resolved["features_extractor_class"] is default_class:
-                resolved["features_extractor_kwargs"] = {
-                    **resolved["features_extractor_kwargs"],
-                    **self.policy_kwargs["features_extractor_kwargs"],
-                }
-            else:
-                resolved["features_extractor_kwargs"] = dict(
-                    self.policy_kwargs["features_extractor_kwargs"]
-                )
-        return resolved
-
-    def _build_features_extractor(self) -> BaseFeaturesExtractor:
-        resolved = self._resolve_policy_kwargs()
-        features_extractor_class = resolved["features_extractor_class"]
-        if not isinstance(features_extractor_class, type) or not issubclass(
-            features_extractor_class, BaseFeaturesExtractor
-        ):
-            raise TypeError(
-                "policy_kwargs['features_extractor_class'] must be a "
-                "BaseFeaturesExtractor subclass."
-            )
-        return features_extractor_class(
-            observation_space=self.env.single_observation_space,
-            **resolved["features_extractor_kwargs"],
-        )
-
     def _build_replay_buffer(self):
-        obs_space = self.env.single_observation_space
-        if isinstance(obs_space, spaces.Dict):
-            return DictReplayBuffer(
-                observation_space=obs_space,
-                action_space=self.env.single_action_space,
-                num_envs=self.num_envs,
-                buffer_size=self.buffer_size,
-                storage_device=self.buffer_device,
-                sample_device=self.device,
-            )
-        return TensorReplayBuffer(
-            observation_space=obs_space,
+        # obs_space is always Dict (boundary normalization is unconditional).
+        return ReplayBuffer(
+            observation_space=self.env.single_observation_space,
             action_space=self.env.single_action_space,
             num_envs=self.num_envs,
             buffer_size=self.buffer_size,

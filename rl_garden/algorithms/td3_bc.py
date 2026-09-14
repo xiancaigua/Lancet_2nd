@@ -3,34 +3,42 @@
 Ported from ``3rd_party/CORL/algorithms/offline/td3_bc.py``. Pure offline,
 no online fine-tuning variant (the BC term is a pure anti-extrapolation
 regularizer, not something the TD3-BC paper ever removes for online use).
-Box observations only, matching CORL's D4RL MuJoCo scope.
+State-only (matching CORL's D4RL MuJoCo scope) or Dict/vision observations
+via ``encoder_config``/``obs_groups`` (schema-driven, like every other
+algorithm); either way at least one ``state``/``state_<name>`` key is
+required -- CORL's ``normalize_states`` mean/std normalization
+(``TD3BCPolicy._normalize_state``, ``rl_garden.common.obs_normalization``)
+concatenates and normalizes every ``schema.state_keys`` entry (in that
+order) before the extractor runs, never touching ``rgb_<cam>``/
+``depth_<cam>`` keys. Also accepts ``critic_encoder_config``/
+``encoder_sharing`` (see ``rl_garden.policies.base.BasePolicy``) for an
+asymmetric or separately-encoded critic; the encoder is otherwise trained
+only by the critic loss under the default ``"shared_critic_grad"`` sharing
+mode (the actor path is stop-gradiented -- see ``BasePolicy.extract_actor_features``).
 """
 from __future__ import annotations
 
+import dataclasses
 from typing import Any, Literal, Optional, Sequence
 
 import torch
 import torch.nn.functional as F
-from gymnasium import spaces
 
+from rl_garden.algorithms._observation import EncoderSharing
 from rl_garden.algorithms.offline import OfflineEnvSpec, OfflineRLAlgorithm
-from rl_garden.buffers.tensor_buffer import TensorReplayBuffer
+from rl_garden.buffers.replay_buffer import ReplayBuffer
 from rl_garden.common.logger import Logger
 from rl_garden.common.optim import ScheduleType, make_lr_scheduler, make_optimizer
 from rl_garden.common.utils import polyak_update
-from rl_garden.encoders.base import BaseFeaturesExtractor
-from rl_garden.encoders.flatten import FlattenExtractor
+from rl_garden.encoders.config import EncoderConfig
 from rl_garden.networks import KernelInit
 from rl_garden.networks.actor_critic import BackboneType
+from rl_garden.observations import ObsGroups, ObservationSchema
 from rl_garden.policies.td3_bc_policy import TD3BCPolicy
 
 
 class TD3BCCore:
     """Shared TD3-BC loss/network logic."""
-
-    _SUPPORTED_POLICY_KWARGS = frozenset(
-        {"features_extractor_class", "features_extractor_kwargs"}
-    )
 
     def _init_td3bc_params(
         self,
@@ -60,6 +68,11 @@ class TD3BCCore:
         critic_dropout_rate: Optional[float] = None,
         kernel_init: Optional[KernelInit] = None,
         backbone_type: BackboneType = "mlp",
+        encoder_config: Optional[EncoderConfig] = None,
+        obs_groups: Optional[ObsGroups] = None,
+        critic_encoder_config: Optional[EncoderConfig] = None,
+        encoder_sharing: Optional[EncoderSharing] = None,
+        image_augmentation_seed: Optional[int] = None,
     ) -> None:
         if not (0.0 < tau <= 1.0):
             raise ValueError(f"tau must be in (0, 1], got {tau}.")
@@ -95,6 +108,11 @@ class TD3BCCore:
         self.critic_dropout_rate = critic_dropout_rate
         self.kernel_init = kernel_init
         self.backbone_type = backbone_type
+        self.encoder_config = encoder_config
+        self.obs_groups = obs_groups
+        self.critic_encoder_config = critic_encoder_config
+        self.encoder_sharing = encoder_sharing
+        self._image_augmentation_seed = image_augmentation_seed
 
     def _optimizer_names(self) -> tuple[str, ...]:
         return ("critic_optimizer", "actor_optimizer")
@@ -118,6 +136,20 @@ class TD3BCCore:
             "alpha": self.alpha,
             "net_arch": self.net_arch,
             "n_critics": self.n_critics,
+            "encoder_sharing": self.encoder_sharing,
+            "encoder_sharing_origin": self.encoder_sharing_origin,
+            "encoder_config": (
+                dataclasses.asdict(self.encoder_config) if self.encoder_config is not None else None
+            ),
+            "obs_groups": (
+                dataclasses.asdict(self.obs_groups) if self.obs_groups is not None else None
+            ),
+            "critic_encoder_config": (
+                dataclasses.asdict(self.critic_encoder_config)
+                if self.critic_encoder_config is not None
+                else None
+            ),
+            "image_augmentation_seed": self._image_augmentation_seed,
         }
 
     def _extra_checkpoint_state(self) -> dict[str, Any]:
@@ -135,25 +167,9 @@ class TD3BCCore:
             if sched is not None and sched_state is not None:
                 sched.load_state_dict(sched_state)
 
-    def _default_features_extractor_class(self) -> type[BaseFeaturesExtractor]:
+    def _build_replay_buffer(self) -> ReplayBuffer:
         obs_space = self.env.single_observation_space
-        if isinstance(obs_space, spaces.Box):
-            return FlattenExtractor
-        raise TypeError(
-            "TD3BC only supports Box observation spaces, got " + str(type(obs_space))
-        )
-
-    def _build_features_extractor(self) -> BaseFeaturesExtractor:
-        cls = self._default_features_extractor_class()
-        return cls(observation_space=self.env.single_observation_space)
-
-    def _build_replay_buffer(self) -> TensorReplayBuffer:
-        obs_space = self.env.single_observation_space
-        if not isinstance(obs_space, spaces.Box):
-            raise TypeError(
-                "TD3BC only supports Box observation spaces, got " + str(type(obs_space))
-            )
-        return TensorReplayBuffer(
+        return ReplayBuffer(
             observation_space=obs_space,
             action_space=self.env.single_action_space,
             num_envs=self.num_envs,
@@ -163,11 +179,13 @@ class TD3BCCore:
         )
 
     def _setup_model(self) -> None:
-        features_extractor = self._build_features_extractor()
         self.policy = TD3BCPolicy(
             observation_space=self.env.single_observation_space,
             action_space=self.env.single_action_space,
-            features_extractor=features_extractor,
+            **self._policy_extractor_kwargs(
+                self.env.single_observation_space,
+                augmentation_seed=self._image_augmentation_seed,
+            ),
             net_arch=self.net_arch,
             n_critics=self.n_critics,
             actor_use_layer_norm=self.actor_use_layer_norm,
@@ -214,8 +232,14 @@ class TD3BCCore:
         self._action_high = high
 
     def fit_obs_normalizer(self) -> None:
+        # buf.obs is always a DictArray now (boundary normalization always on);
+        # same pattern as AWAC.fit_obs_normalizer. Concatenate every state key
+        # (schema.state_keys order) so the fitted mean/std matches the width
+        # TD3BCPolicy registers when extra_state keys are present.
         buf = self.replay_buffer
-        obs = buf.obs[: buf.size].reshape(-1, buf.obs.shape[-1]).to(self.device)
+        state_keys = ObservationSchema.from_space(self.env.single_observation_space).state_keys
+        raw_state = torch.cat([buf.obs[key] for key in state_keys], dim=-1)
+        obs = raw_state[: buf.size].reshape(-1, raw_state.shape[-1]).to(self.device)
         self.policy.fit_obs_normalizer(obs)
 
     def _sample_train_batch(self, batch_size: int):
@@ -259,9 +283,9 @@ class TD3BCCore:
             self._global_update += 1
             data = self._sample_train_batch(self.batch_size)
 
-            obs_features = self.policy.extract_features(data.obs)
+            critic_features = self.policy.extract_critic_features(data.obs)
             with torch.no_grad():
-                next_features = self.policy.extract_features(data.next_obs)
+                next_features = self.policy.extract_critic_features(data.next_obs)
                 noise = (torch.randn_like(data.actions) * self.policy_noise).clamp(
                     -self.noise_clip, self.noise_clip
                 )
@@ -275,7 +299,7 @@ class TD3BCCore:
                     1.0 - data.dones.unsqueeze(-1)
                 ) * target_q_all.min(dim=0).values
 
-            q_all = self.policy.q_values_all(obs_features, data.actions, target=False)
+            q_all = self.policy.q_values_all(critic_features, data.actions, target=False)
             critic_loss = self._critic_loss(q_all, target_q)
 
             self.critic_optimizer.zero_grad(set_to_none=True)
@@ -291,10 +315,24 @@ class TD3BCCore:
             counts["critic_loss"] = counts.get("critic_loss", 0) + 1
 
             if self._global_update % self.policy_freq == 0:
-                features_detached = obs_features.detach()
-                pi_action = self.policy.actor(features_detached)
+                # Reuse the critic's own (already-computed) obs features
+                # when the encoder_sharing rule lets us (DrQ-v2's single
+                # augmented view -- see BasePolicy.actor_features_from_critic);
+                # only re-run the encoder (extract_actor_features) when the
+                # actor genuinely has its own, separate extractor.
+                actor_features = self.policy.actor_features_from_critic(critic_features)
+                if actor_features is None:
+                    actor_features = self.policy.extract_actor_features(data.obs)
+                pi_action = self.policy.actor(actor_features)
+                # critic_features (computed once, above, for the critic
+                # loss) is already critic-role features for this same
+                # data.obs regardless of encoder_sharing -- reuse it
+                # (detached) instead of critic_features_for's own
+                # re-extraction, which would otherwise re-run the critic's
+                # encoder a second time under "separate".
+                q_features = critic_features.detach()
                 q_pi = self.policy.q_values_all(
-                    features_detached, pi_action, target=False
+                    q_features, pi_action, target=False
                 )[0]
                 lmbda = self.alpha / q_pi.abs().mean().detach()
                 bc_loss = F.mse_loss(pi_action, data.actions)
@@ -370,6 +408,11 @@ class TD3BC(TD3BCCore, OfflineRLAlgorithm):
         critic_dropout_rate: Optional[float] = None,
         kernel_init: Optional[KernelInit] = None,
         backbone_type: BackboneType = "mlp",
+        encoder_config: Optional[EncoderConfig] = None,
+        obs_groups: Optional[ObsGroups] = None,
+        critic_encoder_config: Optional[EncoderConfig] = None,
+        encoder_sharing: Optional[EncoderSharing] = None,
+        image_augmentation_seed: Optional[int] = None,
         seed: int = 1,
         device: str | torch.device = "auto",
         logger: Optional[Logger] = None,
@@ -429,12 +472,11 @@ class TD3BC(TD3BCCore, OfflineRLAlgorithm):
             critic_dropout_rate=critic_dropout_rate,
             kernel_init=kernel_init,
             backbone_type=backbone_type,
+            encoder_config=encoder_config,
+            obs_groups=obs_groups,
+            critic_encoder_config=critic_encoder_config,
+            encoder_sharing=encoder_sharing,
+            image_augmentation_seed=image_augmentation_seed,
         )
-
-        obs_space = self.env.single_observation_space
-        if not isinstance(obs_space, spaces.Box):
-            raise TypeError(
-                f"TD3BC supports only Box observation spaces, got {type(obs_space)}"
-            )
 
         self._setup_model()

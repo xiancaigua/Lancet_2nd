@@ -72,7 +72,12 @@ from gymnasium import spaces
 
 from rl_garden.algorithms._chunked_rollout import ChunkedRolloutMixin
 from rl_garden.algorithms.rlpd import RLPD
-from rl_garden.buffers.chunked_replay_buffer import ChunkedTensorReplayBuffer
+from rl_garden.buffers.chunked_replay_buffer import ChunkedReplayBuffer
+from rl_garden.observations import (
+    ObservationContractError,
+    ObservationSchema,
+    normalize_observation_space,
+)
 
 
 class ACRLPDCore:
@@ -102,17 +107,27 @@ class ACRLPDCore:
     # --- action-space / buffer plumbing ---
 
     def _policy_action_space(self) -> spaces.Box:
-        raw = self.env.single_action_space
-        assert isinstance(raw, spaces.Box), "ACRLPD requires a flat Box action space."
-        low = np.tile(np.asarray(raw.low, dtype=np.float32).reshape(-1), self.horizon_length)
-        high = np.tile(np.asarray(raw.high, dtype=np.float32).reshape(-1), self.horizon_length)
+        action_space = self.env.single_action_space
+        assert isinstance(action_space, spaces.Box), "ACRLPD requires a flat Box action space."
+        low = np.tile(np.asarray(action_space.low, dtype=np.float32).reshape(-1), self.horizon_length)
+        high = np.tile(np.asarray(action_space.high, dtype=np.float32).reshape(-1), self.horizon_length)
         return spaces.Box(low=low, high=high, dtype=np.float32)
 
-    def _build_replay_buffer(self) -> ChunkedTensorReplayBuffer:
-        obs_space = self.env.single_observation_space
-        if not isinstance(obs_space, spaces.Box):
-            raise TypeError("ACRLPD is state-only (Box observations); vision is out of scope.")
-        return ChunkedTensorReplayBuffer(
+    def _state_only_obs_space(self) -> spaces.Dict:
+        """ACRLPD is state-only; kept Dict (not unwrapped to a bare Box) so
+        data.obs stays consistent with what SAC/RLPD's schema-driven
+        ``_actor_features``/``_critic_features`` expect (see
+        ``ObservationEncoderMixin``, inherited verbatim here)."""
+        obs_space = normalize_observation_space(self.env.single_observation_space)
+        if ObservationSchema.from_space(obs_space).has_images:
+            raise ObservationContractError(
+                "ACRLPD is state-only; vision is out of scope."
+            )
+        return obs_space
+
+    def _build_replay_buffer(self) -> ChunkedReplayBuffer:
+        obs_space = self._state_only_obs_space()
+        return ChunkedReplayBuffer(
             observation_space=obs_space,
             action_space=self.env.single_action_space,
             num_envs=self.num_envs,
@@ -123,11 +138,9 @@ class ACRLPDCore:
             sample_device=self.device,
         )
 
-    def _build_prior_data_buffer(self, buffer_size: int) -> ChunkedTensorReplayBuffer:
-        obs_space = self.env.single_observation_space
-        if not isinstance(obs_space, spaces.Box):
-            raise TypeError("ACRLPD is state-only (Box observations); vision is out of scope.")
-        return ChunkedTensorReplayBuffer(
+    def _build_prior_data_buffer(self, buffer_size: int) -> ChunkedReplayBuffer:
+        obs_space = self._state_only_obs_space()
+        return ChunkedReplayBuffer(
             observation_space=obs_space,
             action_space=self.env.single_action_space,
             num_envs=1,
@@ -145,7 +158,7 @@ class ACRLPDCore:
 
     def _sample_train_batch(self, batch_size: int):
         # Flatten the (B, horizon_length, action_dim) window gathered by
-        # ChunkedTensorReplayBuffer into the (B, horizon_length*action_dim)
+        # ChunkedReplayBuffer into the (B, horizon_length*action_dim)
         # macro-action the (chunked-action-space) critic/actor expect --
         # matches QC's own `batch_actions = reshape(actions, (B, -1))`
         # (acrlpd.py:44), done once here so every downstream loss sees an
@@ -190,9 +203,9 @@ class ACRLPDCore:
 
     def _actor_loss(self, obs) -> tuple[torch.Tensor, torch.Tensor]:
         alpha = self._current_alpha().detach()
-        action, log_prob, features = self._actor_action_log_prob(
-            obs, stop_gradient=self._actor_stop_gradient()
-        )
+        # No explicit stop_gradient: SACPolicy.actor_action_log_prob applies
+        # BasePolicy.extract_actor_features's encoder_sharing rule by default.
+        action, log_prob, features = self._actor_action_log_prob(obs)
         qs = self.policy.q_values_subsampled(features, action, subsample_size=None, target=False)
         # acrlpd.py:84's actor_loss hardcodes `q = jnp.mean(qs, axis=0)` --
         # unlike the critic target, q_agg ("min" vs "mean") only applies to
@@ -208,9 +221,7 @@ class ACRLPDCore:
         if self.bc_alpha <= 0.0:
             return actor_loss, log_prob_detached
         # data.actions is already flattened by _sample_train_batch.
-        bc_log_prob = self.policy.evaluate_action_log_prob(
-            data.obs, data.actions, stop_gradient=self._actor_stop_gradient()
-        )
+        bc_log_prob = self.policy.evaluate_action_log_prob(data.obs, data.actions)
         bc_loss = -bc_log_prob.mean() * self.bc_alpha
         return actor_loss + bc_loss, log_prob_detached
 

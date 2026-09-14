@@ -21,7 +21,7 @@ Formulas verified against ``rebrac.py`` directly:
   it's used: ``next_q = target_critic(next_obs,next_action).min(0) -
   critic_bc_coef * ((next_action - next_actions)**2).sum(-1)``. This needs
   ``next_actions`` -- the action the dataset's behavior policy actually
-  took at ``next_obs`` -- which ``TensorReplayBuffer`` doesn't carry; see
+  took at ``next_obs`` -- which ``ReplayBuffer`` doesn't carry; see
   ``ReBRACReplayBuffer`` (``rl_garden/buffers/rebrac_replay_buffer.py``).
   The resulting ``critic_loss`` formula is unchanged from ``TD3BCCore``'s
   own (``((q-target_q)**2).mean(over batch).sum(over critics)``) -- reused
@@ -46,15 +46,17 @@ from __future__ import annotations
 from typing import Any, Literal, Optional, Sequence
 
 import torch
-from gymnasium import spaces
 
+from rl_garden.algorithms._observation import EncoderSharing
 from rl_garden.algorithms.offline import OfflineEnvSpec, OfflineRLAlgorithm
 from rl_garden.algorithms.td3_bc import TD3BCCore
 from rl_garden.buffers.rebrac_replay_buffer import ReBRACReplayBuffer
 from rl_garden.common.logger import Logger
 from rl_garden.common.utils import polyak_update
+from rl_garden.encoders.config import EncoderConfig
 from rl_garden.networks import KernelInit
 from rl_garden.networks.actor_critic import BackboneType
+from rl_garden.observations import ObsGroups
 
 
 class ReBRACCore(TD3BCCore):
@@ -90,6 +92,11 @@ class ReBRACCore(TD3BCCore):
         critic_dropout_rate: Optional[float] = None,
         kernel_init: Optional[KernelInit] = None,
         backbone_type: BackboneType = "mlp",
+        encoder_config: Optional[EncoderConfig] = None,
+        obs_groups: Optional[ObsGroups] = None,
+        critic_encoder_config: Optional[EncoderConfig] = None,
+        encoder_sharing: Optional[EncoderSharing] = None,
+        image_augmentation_seed: Optional[int] = None,
     ) -> None:
         # TD3BCCore._init_td3bc_params owns tau/lrs/net_arch/n_critics/layer
         # norms/etc.; its own `alpha` field is unused here (ReBRAC replaces
@@ -120,6 +127,11 @@ class ReBRACCore(TD3BCCore):
             critic_dropout_rate=critic_dropout_rate,
             kernel_init=kernel_init,
             backbone_type=backbone_type,
+            encoder_config=encoder_config,
+            obs_groups=obs_groups,
+            critic_encoder_config=critic_encoder_config,
+            encoder_sharing=encoder_sharing,
+            image_augmentation_seed=image_augmentation_seed,
         )
         if actor_bc_coef < 0:
             raise ValueError(f"actor_bc_coef must be >= 0, got {actor_bc_coef}.")
@@ -141,10 +153,6 @@ class ReBRACCore(TD3BCCore):
 
     def _build_replay_buffer(self) -> ReBRACReplayBuffer:
         obs_space = self.env.single_observation_space
-        if not isinstance(obs_space, spaces.Box):
-            raise TypeError(
-                "ReBRAC only supports Box observation spaces, got " + str(type(obs_space))
-            )
         return ReBRACReplayBuffer(
             observation_space=obs_space,
             action_space=self.env.single_action_space,
@@ -164,9 +172,9 @@ class ReBRACCore(TD3BCCore):
             self._global_update += 1
             data = self._sample_train_batch(self.batch_size)
 
-            obs_features = self.policy.extract_features(data.obs)
+            critic_features = self.policy.extract_critic_features(data.obs)
             with torch.no_grad():
-                next_features = self.policy.extract_features(data.next_obs)
+                next_features = self.policy.extract_critic_features(data.next_obs)
                 noise = (torch.randn_like(data.actions) * self.policy_noise).clamp(
                     -self.noise_clip, self.noise_clip
                 )
@@ -186,7 +194,7 @@ class ReBRACCore(TD3BCCore):
                     1.0 - data.dones.unsqueeze(-1)
                 ) * next_q
 
-            q_all = self.policy.q_values_all(obs_features, data.actions, target=False)
+            q_all = self.policy.q_values_all(critic_features, data.actions, target=False)
             critic_loss = self._critic_loss(q_all, target_q)
 
             self.critic_optimizer.zero_grad(set_to_none=True)
@@ -204,15 +212,18 @@ class ReBRACCore(TD3BCCore):
                 counts[key] = counts.get(key, 0) + 1
 
             if self._global_update % self.policy_freq == 0:
-                features_detached = obs_features.detach()
-                pi_action = self.policy.actor(features_detached)
+                actor_features = self.policy.extract_actor_features(data.obs)
+                pi_action = self.policy.actor(actor_features)
                 actor_bc_penalty = (pi_action - data.actions).pow(2).sum(-1, keepdim=True)
+                q_features = self.policy.critic_features_for(
+                    data.obs, actor_features, stop_gradient=True
+                )
                 # min over the FULL critic ensemble (rebrac.py:441) -- unlike
                 # TD3BCCore's own actor loss, which uses q_values_all(...)[0]
                 # (first critic only). Uses the freshly-updated critic, same
                 # ordering TD3BCCore.train() already relies on.
                 q_values = self.policy.q_values_all(
-                    features_detached, pi_action, target=False
+                    q_features, pi_action, target=False
                 ).min(dim=0).values
                 if self.normalize_q:
                     lmbda = (1.0 / q_values.abs().mean()).detach()
@@ -295,6 +306,11 @@ class ReBRAC(ReBRACCore, OfflineRLAlgorithm):
         critic_dropout_rate: Optional[float] = None,
         kernel_init: Optional[KernelInit] = None,
         backbone_type: BackboneType = "mlp",
+        encoder_config: Optional[EncoderConfig] = None,
+        obs_groups: Optional[ObsGroups] = None,
+        critic_encoder_config: Optional[EncoderConfig] = None,
+        encoder_sharing: Optional[EncoderSharing] = None,
+        image_augmentation_seed: Optional[int] = None,
         seed: int = 1,
         device: str | torch.device = "auto",
         logger: Optional[Logger] = None,
@@ -356,12 +372,11 @@ class ReBRAC(ReBRACCore, OfflineRLAlgorithm):
             critic_dropout_rate=critic_dropout_rate,
             kernel_init=kernel_init,
             backbone_type=backbone_type,
+            encoder_config=encoder_config,
+            obs_groups=obs_groups,
+            critic_encoder_config=critic_encoder_config,
+            encoder_sharing=encoder_sharing,
+            image_augmentation_seed=image_augmentation_seed,
         )
-
-        obs_space = self.env.single_observation_space
-        if not isinstance(obs_space, spaces.Box):
-            raise TypeError(
-                f"ReBRAC supports only Box observation spaces, got {type(obs_space)}"
-            )
 
         self._setup_model()

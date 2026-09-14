@@ -1,21 +1,22 @@
 """Offline SAC entrypoint backed by the shared SACCore update path."""
 from __future__ import annotations
 
+import dataclasses
 from typing import Any, Literal, Optional, Sequence
 
 import numpy as np
 import torch
 import torch.nn.functional as F
-from gymnasium import spaces
 
+from rl_garden.algorithms._observation import EncoderSharing
 from rl_garden.algorithms.offline import OfflineEnvSpec, OfflineRLAlgorithm
 from rl_garden.algorithms.sac import SAC
 from rl_garden.algorithms.sac_core import SACCore
-from rl_garden.buffers.tensor_buffer import TensorReplayBuffer
+from rl_garden.buffers.replay_buffer import ReplayBuffer
 from rl_garden.common.logger import Logger
 from rl_garden.common.optim import ScheduleType, make_lr_scheduler, make_optimizer
-from rl_garden.encoders.base import BaseFeaturesExtractor
-from rl_garden.encoders.flatten import FlattenExtractor
+from rl_garden.encoders.config import EncoderConfig
+from rl_garden.observations import ObsGroups
 from rl_garden.policies.sac_policy import SACPolicy
 
 
@@ -58,6 +59,10 @@ class OfflineSAC(SACCore, OfflineRLAlgorithm):
         critic_hidden_dims: Optional[Sequence[int]] = None,
         n_critics: int = 2,
         critic_subsample_size: Optional[int] = None,
+        encoder_config: Optional[EncoderConfig] = None,
+        obs_groups: Optional[ObsGroups] = None,
+        critic_encoder_config: Optional[EncoderConfig] = None,
+        encoder_sharing: Optional[EncoderSharing] = None,
         policy_kwargs: Optional[dict[str, Any]] = None,
         seed: int = 1,
         device: str | torch.device = "auto",
@@ -111,6 +116,10 @@ class OfflineSAC(SACCore, OfflineRLAlgorithm):
         )
         self.n_critics = n_critics
         self.critic_subsample_size = critic_subsample_size
+        self.encoder_sharing = encoder_sharing
+        self.encoder_config = encoder_config
+        self.obs_groups = obs_groups
+        self.critic_encoder_config = critic_encoder_config
         self.policy_kwargs = SAC._normalize_policy_kwargs(self, policy_kwargs)
         self._setup_model()
 
@@ -136,23 +145,25 @@ class OfflineSAC(SACCore, OfflineRLAlgorithm):
             "net_arch": self.net_arch,
             "n_critics": self.n_critics,
             "critic_subsample_size": self.critic_subsample_size,
+            "encoder_sharing": self.encoder_sharing,
+            "encoder_sharing_origin": self.encoder_sharing_origin,
+            "encoder_config": (
+                dataclasses.asdict(self.encoder_config) if self.encoder_config is not None else None
+            ),
+            "obs_groups": (
+                dataclasses.asdict(self.obs_groups) if self.obs_groups is not None else None
+            ),
+            "critic_encoder_config": (
+                dataclasses.asdict(self.critic_encoder_config)
+                if self.critic_encoder_config is not None
+                else None
+            ),
         }
 
-    def _default_features_extractor_class(self) -> type[BaseFeaturesExtractor]:
-        assert isinstance(self.env.single_observation_space, spaces.Box), (
-            "OfflineSAC expects a flat Box observation space."
-        )
-        return FlattenExtractor
-
-    def _default_features_extractor_kwargs(self) -> dict[str, Any]:
-        return {}
-
     _normalize_policy_kwargs = SAC._normalize_policy_kwargs
-    _resolve_policy_kwargs = SAC._resolve_policy_kwargs
-    _build_features_extractor = SAC._build_features_extractor
 
     def _build_replay_buffer(self):
-        return TensorReplayBuffer(
+        return ReplayBuffer(
             observation_space=self.env.single_observation_space,
             action_space=self.env.single_action_space,
             num_envs=self.num_envs,
@@ -162,14 +173,13 @@ class OfflineSAC(SACCore, OfflineRLAlgorithm):
         )
 
     def _setup_model(self) -> None:
-        features_extractor = self._build_features_extractor()
         self.policy = SACPolicy(
             observation_space=self.env.single_observation_space,
             action_space=self.env.single_action_space,
-            features_extractor=features_extractor,
             net_arch=self.net_arch,
             n_critics=self.n_critics,
             critic_subsample_size=self.critic_subsample_size,
+            **self._policy_extractor_kwargs(self.env.single_observation_space),
         ).to(self.device)
         self.q_optimizer = make_optimizer(
             list(self.policy.critic_and_encoder_parameters()),

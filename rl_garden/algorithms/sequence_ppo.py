@@ -18,7 +18,6 @@ import torch
 
 from rl_garden.algorithms.ppo import PPO
 from rl_garden.buffers.recurrent_rollout_buffer import (
-    RecurrentDictRolloutBuffer,
     RecurrentRolloutBuffer,
     RecurrentRolloutBufferSample,
 )
@@ -28,7 +27,17 @@ from rl_garden.policies.recurrent_ppo_policy import RecurrentPPOPolicy
 
 
 class SequencePPO(PPO):
-    def _build_sequence_encoder(self, features_extractor) -> SequenceLatentEncoder:
+    # A single SequenceLatentEncoder (RNN/GTrXL) sits between the encoder
+    # and both actor/value heads -- there is no way to route a second,
+    # independently-trained critic extractor's output through it, so
+    # "separate" is not supported (RecurrentPPOPolicy's critic_extractor
+    # guard). "shared_critic_grad"/"shared" both use one encoder instance
+    # and stay valid. Checked by ObservationEncoderMixin._resolve_encoder_
+    # sharing against the resolved value, and read statically by
+    # algorithm_registry's preflight.
+    encoder_sharing_choices: tuple = ("shared_critic_grad", "shared")
+
+    def _build_sequence_encoder(self, actor_extractor) -> SequenceLatentEncoder:
         raise NotImplementedError
 
     def _setup_model(self) -> None:
@@ -41,17 +50,17 @@ class SequencePPO(PPO):
                 f"divisible by num_minibatches ({self.num_minibatches}) for "
                 "env-axis minibatching."
             )
-        features_extractor = self._build_features_extractor()
-        if features_extractor.structured_feature_config() is not None:
+        extractor_kwargs = self._policy_extractor_kwargs(self.env.single_observation_space)
+        actor_extractor = extractor_kwargs["actor_extractor"]
+        if actor_extractor.structured_feature_config() is not None:
             raise NotImplementedError(
                 f"{type(self).__name__} only supports flat-latent feature "
                 "extractors this round (ViT token_and_prop layouts untested)."
             )
-        sequence_encoder = self._build_sequence_encoder(features_extractor)
+        sequence_encoder = self._build_sequence_encoder(actor_extractor)
         self.policy = RecurrentPPOPolicy(
             observation_space=self.env.single_observation_space,
             action_space=self.env.single_action_space,
-            features_extractor=features_extractor,
             recurrent_encoder=sequence_encoder,
             net_arch=self.net_arch,
             log_std_init=self.log_std_init,
@@ -65,10 +74,11 @@ class SequencePPO(PPO):
             kernel_init=self.kernel_init,
             backbone_type=self.backbone_type,
             # Threaded through (rather than omitted) so a misconfigured
-            # policy_kwargs['critic_features_extractor_class'] raises
+            # policy_kwargs['critic_extractor_class'] (or asymmetric
+            # obs_groups/encoder_sharing="separate") raises
             # RecurrentPPOPolicy's clear guard, instead of being silently
             # dropped.
-            critic_features_extractor=self._build_critic_features_extractor(),
+            **extractor_kwargs,
         ).to(self.device)
         self.policy_optimizer = make_optimizer(
             self.policy.parameters(),
@@ -87,8 +97,7 @@ class SequencePPO(PPO):
                 min_lr_ratio=self.lr_min_ratio,
             )
         )
-        buffer_cls = RecurrentDictRolloutBuffer if self._is_dict_obs else RecurrentRolloutBuffer
-        self.rollout_buffer = buffer_cls(
+        self.rollout_buffer = RecurrentRolloutBuffer(
             observation_space=self.env.single_observation_space,
             action_space=self.env.single_action_space,
             num_steps=self.num_steps,
@@ -107,7 +116,7 @@ class SequencePPO(PPO):
 
     def _rollout_step(self, obs, hidden, episode_starts: torch.Tensor):
         policy_obs = self._obs_to_policy_device(obs)
-        self.policy.update_obs_normalizer(policy_obs)
+        self.policy.update_normalizer(policy_obs)
         if self.lr_schedule == "adaptive_kl":
             with torch.no_grad():
                 actions, values, log_probs, entropy, new_hidden, mean, log_std = (
@@ -116,7 +125,7 @@ class SequencePPO(PPO):
                         hidden,
                         episode_starts,
                         deterministic=False,
-                        stop_gradient_actor=self._actor_stop_gradient(),
+                        stop_gradient_actor=self.policy.actor_features_detached,
                     )
                 )
             self._rollout_mean, self._rollout_log_std = mean, log_std
@@ -127,7 +136,7 @@ class SequencePPO(PPO):
                 hidden,
                 episode_starts,
                 deterministic=False,
-                stop_gradient_actor=self._actor_stop_gradient(),
+                stop_gradient_actor=self.policy.actor_features_detached,
             )
 
     def _compute_final_values(self, infos, done_mask: torch.Tensor, hidden) -> torch.Tensor:
@@ -203,7 +212,7 @@ class SequencePPO(PPO):
                     data.actions,
                     data.initial_hidden,
                     data.episode_starts,
-                    stop_gradient_actor=self._actor_stop_gradient(),
+                    stop_gradient_actor=self.policy.actor_features_detached,
                 )
             )
             new_mean = mean.reshape((-1,) + mean.shape[2:])
@@ -216,7 +225,7 @@ class SequencePPO(PPO):
                 data.actions,
                 data.initial_hidden,
                 data.episode_starts,
-                stop_gradient_actor=self._actor_stop_gradient(),
+                stop_gradient_actor=self.policy.actor_features_detached,
             )
             new_mean = new_log_std = old_mean = old_log_std = None
         # (T,B,1) tensors; T-major flatten so index [t,b] lands at the same flat

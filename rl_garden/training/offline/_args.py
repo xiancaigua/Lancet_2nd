@@ -4,37 +4,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal, Optional
 
-from rl_garden.common.cli_args import CheckpointArgs, LoggingArgs
+from rl_garden.common.cli_args import CheckpointArgs, LoggingArgs, ObservationArgs
 from rl_garden.common.env_args import EnvBackendArgs
-
-
-@dataclass
-class OfflineVisionArgs:
-    """Vision settings inferred from an offline dataset rather than a live env."""
-
-    obs_mode: str = "rgb"
-    include_state: bool = True
-    camera_width: Optional[int] = 64
-    camera_height: Optional[int] = 64
-    encoder: Literal["plain_conv", "resnet10", "resnet18", "vit"] = "plain_conv"
-    encoder_features_dim: int = 256
-    image_fusion_mode: Literal["stack_channels", "per_key"] = "stack_channels"
-    vit_fusion_mode: Literal["per_key", "stack_channels"] = "per_key"
-    vit_embed_dim: int = 128
-    vit_depth: int = 1
-    vit_num_heads: int = 4
-    vit_embed_norm: bool = False
-    vit_augmentation: Literal["random_shift", "none"] = "random_shift"
-    vit_random_shift_pad: int = 4
-    vit_actor_feature_dim: int = 128
-    vit_critic_spatial_emb_dim: int = 1024
-    pretrained_weights: Optional[str] = None
-    freeze_resnet_encoder: bool = False
-    freeze_resnet_backbone: bool = False
-    plain_conv_weight_init: Literal["kaiming_uniform", "orthogonal"] = "kaiming_uniform"
-    plain_conv_last_act: bool = True
-    plain_conv_pooling: Literal["flatten", "gap", "adaptive_max"] = "flatten"
-    per_camera_rgbd: bool = False
 
 
 @dataclass
@@ -99,7 +70,7 @@ class OfflineEvalArgs:
 class OfflineCommonArgs(
     OfflineEvalArgs,
     OfflineRuntimeArgs,
-    OfflineVisionArgs,
+    ObservationArgs,
     OfflineOptimizationArgs,
     OfflineReplayArgs,
     OfflineDatasetArgs,
@@ -116,7 +87,7 @@ class TDMPC2MultitaskTrainingArgs(CheckpointArgs, LoggingArgs):
 
     Deliberately does NOT inherit ``EnvRunArgs``/``EnvBackendArgs``/
     ``OfflineDatasetArgs``: there is no single ``env_id``/live env (training
-    never touches one, see ``rl_garden.algorithms.tdmpc2.multitask.agent``)
+    never touches one, see ``rl_garden.algorithms.tdmpc2_multitask``)
     and no single homogeneous dataset (``dataset_dir`` points at the
     per-task, differently-shaped output of
     ``tools/conversion/convert_tdmpc2_multitask_dataset.py``, not one
@@ -158,13 +129,18 @@ class TDMPC2MultitaskTrainingArgs(CheckpointArgs, LoggingArgs):
 
 
 @dataclass
-class DiffusionBCTrainingArgs(CheckpointArgs, LoggingArgs):
+class DiffusionBCTrainingArgs(ObservationArgs, CheckpointArgs, LoggingArgs):
     """Diffusion BC pretraining (DPPO phase 1). Deliberately does NOT inherit
     ``OfflineCommonArgs``: ``run_offline`` assumes a ``agent.replay_buffer``
     populated via ``load_offline_dataset``, but ``DiffusionBC`` loads
     ``(obs_history, action_chunk)`` windows directly in its constructor (see
     ``rl_garden.buffers.chunked_dataset``) and has no replay buffer at all --
-    same reasoning as ``TDMPC2MultitaskTrainingArgs``."""
+    same reasoning as ``TDMPC2MultitaskTrainingArgs``. Adds ``ObservationArgs``
+    (absorbed from the former standalone ``VisionDiffusionBCTrainingArgs``) so
+    a single ``diffusion_bc`` CLI surface covers both Box and Dict (vision)
+    observation spaces, matching ``DiffusionBC``'s in-class
+    ``isinstance(obs_space, spaces.Box/Dict)`` branch -- most ``encoder``/
+    ``obs_groups`` fields are no-ops for Box-obs (state-only) datasets."""
 
     dataset_path: str = ""
     num_offline_steps: int = 200_000
@@ -182,6 +158,11 @@ class DiffusionBCTrainingArgs(CheckpointArgs, LoggingArgs):
     randn_clip_value: float = 10.0
     final_action_clip_value: Optional[float] = None
     min_sampling_denoising_std: float = 0.1
+    net_backbone: Literal["mlp", "unet"] = "mlp"
+    unet_down_dims: tuple[int, ...] = (256, 512, 1024)
+    unet_kernel_size: int = 5
+    unet_n_groups: int = 8
+    unet_cond_predict_scale: bool = False
     actor_lr: float = 1e-3
     weight_decay: float = 1e-6
     lr_schedule: Literal["constant", "linear_warmup", "warmup_cosine"] = "constant"
@@ -198,15 +179,26 @@ class DiffusionBCTrainingArgs(CheckpointArgs, LoggingArgs):
 
 
 @dataclass
-class VisionDiffusionBCTrainingArgs(OfflineVisionArgs, CheckpointArgs, LoggingArgs):
-    """Vision-conditioned Diffusion BC pretraining. A standalone sibling of
-    ``DiffusionBCTrainingArgs`` (not built on it) -- mirrors its field set
-    exactly, plus ``OfflineVisionArgs`` for image-encoder config, since
-    ``VisionDiffusionBC`` is itself a standalone sibling of ``DiffusionBC``.
-    Same reasoning as that class for not inheriting ``OfflineCommonArgs``."""
+class ConsistencyDistillBCTrainingArgs(CheckpointArgs, LoggingArgs):
+    """Fully offline LCM-style consistency distillation of a frozen
+    ``DiffusionBC`` teacher into a one/few-step ``ConsistencyDistillBC``
+    student. Same "no ``OfflineCommonArgs``, no replay buffer" reasoning as
+    ``DiffusionBCTrainingArgs`` -- dataset is loaded directly, bespoke runner.
+
+    ``horizon_steps``/``cond_steps``/``denoising_steps``/``net_backbone``+
+    ``unet_*``/``time_dim``/``kernel_init`` must match whatever the
+    ``--bc_checkpoint`` teacher was trained with: student/target networks are
+    warm-started from its EMA state dict.
+    ``ConsistencyDistillBC._setup_model`` validates the teacher-matching
+    fields against the checkpoint's own recorded hyperparameters before
+    loading and raises ``ValueError`` naming every mismatch (a `net_cls`
+    mismatch alone would also fail via a state-dict shape error, but fields
+    like ``denoising_steps``/``activation_fn`` carry no parameters and would
+    otherwise load silently wrong)."""
 
     dataset_path: str = ""
-    num_offline_steps: int = 200_000
+    bc_checkpoint: str = ""
+    num_offline_steps: int = 100_000
     offline_num_traj: Optional[int] = None
     horizon_steps: int = 4
     cond_steps: int = 1
@@ -221,17 +213,18 @@ class VisionDiffusionBCTrainingArgs(OfflineVisionArgs, CheckpointArgs, LoggingAr
     randn_clip_value: float = 10.0
     final_action_clip_value: Optional[float] = None
     min_sampling_denoising_std: float = 0.1
-    actor_lr: float = 1e-3
+    net_backbone: Literal["mlp", "unet"] = "mlp"
+    unet_down_dims: tuple[int, ...] = (256, 512, 1024)
+    unet_kernel_size: int = 5
+    unet_n_groups: int = 8
+    unet_cond_predict_scale: bool = False
+    cm_lr: float = 1e-4
     weight_decay: float = 1e-6
-    lr_schedule: Literal["constant", "linear_warmup", "warmup_cosine"] = "constant"
-    lr_warmup_steps: int = 0
-    lr_decay_steps: int = 0
-    lr_min_ratio: float = 0.0
-    grad_clip_norm: Optional[float] = None
+    cm_ema_decay: float = 0.95
+    cm_grad_clip_norm: Optional[float] = 1.0
+    cm_sigma_data: float = 0.5
+    cm_timestep_scaling: float = 0.1
     batch_size: int = 128
-    ema_decay: float = 0.995
-    ema_update_every: int = 10
-    ema_start_step: int = 0
     seed: int = 1
     device: str = "auto"
 
@@ -290,13 +283,14 @@ class OPALTrainingArgs(CheckpointArgs, LoggingArgs):
 
 
 @dataclass
-class A2ABCTrainingArgs(OfflineVisionArgs, CheckpointArgs, LoggingArgs):
+class A2ABCTrainingArgs(ObservationArgs, CheckpointArgs, LoggingArgs):
     """A2A flow-matching BC pretraining. A standalone sibling of
-    ``VisionDiffusionBCTrainingArgs`` (not built on it) -- swaps
+    ``DiffusionBCTrainingArgs`` (not built on it) -- swaps
     diffusion-specific fields (``denoising_steps``, ``ema_*``,
     ``residual_style``, ``time_dim``) for A2A's flow-in-latent-space fields.
-    ``include_state`` must stay True (enforced in the entrypoint) -- the
-    state-history window is the flow's source, not optional."""
+    ``obs.state`` must stay True (``A2ABC._setup_model`` raises ``ValueError``
+    otherwise) -- the state-history window is the flow's source, not
+    optional."""
 
     dataset_path: str = ""
     num_offline_steps: int = 200_000
@@ -428,6 +422,13 @@ class OfflineCalQLArgs:
     sparse_reward_mc: bool = False
     sparse_negative_reward: float = 0.0
     success_threshold: float = 0.5
+    # SARSA/FQE reference-value network (Cal-QL's fix for continuing tasks,
+    # e.g. D4RL locomotion, where MC return-to-go is truncation-biased).
+    # Opt-in only -- default reproduces today's MC-return-based behavior
+    # exactly. See rl_garden/algorithms/calql.py:CalQLCore.
+    use_sarsa_reference: bool = False
+    sarsa_hidden_dims: tuple[int, ...] = (256, 256)
+    sarsa_lr: float = 3e-4
 
 
 @dataclass
@@ -479,6 +480,32 @@ class OfflineFlowBCArgs:
     actor_lr: float = 3e-4
     net_arch: tuple[int, ...] = (512, 512, 512, 512)
     flow_steps: int = 10
+    actor_use_layer_norm: bool = False
+    kernel_init: Optional[
+        Literal[
+            "xavier_uniform",
+            "xavier_normal",
+            "orthogonal",
+            "kaiming_uniform",
+            "orthogonal_near_zero_output",
+        ]
+    ] = None
+    activation_fn: Optional[Literal["relu", "gelu", "mish"]] = None
+
+
+@dataclass
+class OfflineMeanFlowBCArgs:
+    """MeanFlowBC-specific network/training knobs. Same rationale as
+    ``OfflineFlowBCArgs`` for not building on ``OfflineActorArgs``."""
+
+    actor_lr: float = 3e-4
+    net_arch: tuple[int, ...] = (512, 512, 512, 512)
+    num_sample_steps: int = 1
+    mode: Literal["meanflow", "i-meanflow"] = "i-meanflow"
+    time_dist_mu: float = 0.4
+    time_dist_sigma: float = 1.0
+    adaptive_l2_gamma: float = 0.0
+    adaptive_l2_c: float = 1e-2
     actor_use_layer_norm: bool = False
     kernel_init: Optional[
         Literal[
@@ -583,17 +610,75 @@ class OfflineFQLArgs(OfflineDeterministicActorCriticArgs):
     # overrides OfflineDeterministicActorCriticArgs's implicit ReLU default
     # (no field there today; every other algorithm in the codebase has none).
     activation_fn: Optional[Literal["relu", "gelu"]] = "gelu"
-    # "shared": one encoder (AGENTS.md's project convention, matches SACPolicy).
-    # "separate": three independent encoder instances, matching FQL's own
-    # JAX reference. Only meaningful for Dict (vision) observation spaces --
-    # Box observations use a parameterless FlattenExtractor either way.
-    encoder_sharing: Literal["shared", "separate"] = "shared"
+    # encoder_sharing lives on ObservationArgs (OfflineCommonArgs already
+    # mixes it in): "shared_critic_grad" (default, AGENTS.md's project
+    # convention, matches SACPolicy) vs. "separate" (three independent
+    # encoder instances, matching FQL's own JAX reference). Only meaningful
+    # for Dict (vision) observation spaces -- Box observations use a
+    # parameterless FlattenExtractor either way.
+
+
+@dataclass
+class OfflineFloQArgs(OfflineFQLArgs):
+    """FloQ hyperparameters (Farebrother et al., arXiv 2509.06863). Extends
+    FQL's actor/BC-flow recipe with a flow-matching TD critic."""
+
+    # OGBench singletask sparse-reward defaults; explicit CLI args rather
+    # than read from dataset statistics (see rl_garden/algorithms/floq.py).
+    r_min: float = -1.0
+    r_max: float = 0.0
+    flow_num_ensembles: int = 2
+    noise_samples: int = 8
+    noise_coverage: float = 0.1
+    critic_flow_steps: int = 8
+    train_at_zero_only: bool = False
+    embed_time: bool = True
+    time_embed_dim: int = 64
+    use_prob_embed: bool = True
+    num_bins: int = 51
+    sigma: float = 16.0
+    reward_offset: float = 0.01
+    # Flow-critic velocity network width/depth. None falls back to net_arch
+    # (the shared 512x4 default) -- the reference floq's block_width/
+    # block_depth size only this network; actor and distilled critic stay
+    # at net_arch (512x4), matching the README's cube presets (block_depth=2).
+    critic_flow_net_arch: Optional[list[int]] = None
+
+
+@dataclass
+class OfflineValueFlowsArgs(OfflineFQLArgs):
+    """Value Flows hyperparameters (Dong et al., arXiv 2510.07650). Extends
+    FQL's actor/BC-flow recipe with twin flow-matching critics over the
+    return distribution (no separate scalar critic)."""
+
+    # Dataset-derived in the reference; explicit CLI args here, same
+    # simplification as FloQ's r_min/r_max (see rl_garden/algorithms/value_flows.py).
+    min_reward: float = -1.0
+    max_reward: float = 0.0
+    ret_agg: Literal["mean", "min"] = "mean"
+    confidence_weight_temp: float = 0.3
+    dcfm_lambda: float = 1.0
+    bcfm_lambda: float = 1.0
+    clip_flow_returns: bool = True
+    num_samples: int = 16
+    policy_extraction: Literal["rs", "rpg"] = "rs"
+
+
+@dataclass
+class OfflineFINOArgs(OfflineFQLArgs):
+    """FINO hyperparameters (Shin et al., ICLR 2026). Extends FQL's
+    actor/BC-flow recipe with noise-injected BC-flow training and
+    rejection-sampled (argmax/Boltzmann) inference."""
+
+    noise_scale: float = 0.1
+    beta: float = 10.0
+    num_samples: Optional[int] = None
 
 
 @dataclass
 class OfflineQGFArgs(OfflineDeterministicActorCriticArgs):
     """QGF (Q-Guided Flow) hyperparameters. Defaults match qgf's get_config().
-    State-only (Box observations) -- no vision support in v1."""
+    Box or Dict (vision) observations."""
 
     horizon_length: int = 1
     actor_lr: float = 3e-4
@@ -631,10 +716,10 @@ class OfflineQGFArgs(OfflineDeterministicActorCriticArgs):
 @dataclass
 class OfflineQAMArgs(OfflineDeterministicActorCriticArgs):
     """QAM (Q-learning with Adjoint Matching) hyperparameters. Defaults
-    match qam's get_config(). State-only (Box observations) -- no vision
-    support in v1. `edit_scale`'s network construction is a best-effort
-    reconstruction of upstream-missing code (see rl_garden/policies/
-    qam_policy.py's docstring)."""
+    match qam's get_config(). Box or Dict (vision) observations.
+    `edit_scale`'s network construction is a best-effort reconstruction of
+    upstream-missing code (see rl_garden/policies/qam_policy.py's
+    docstring)."""
 
     horizon_length: int = 1
     actor_lr: float = 3e-4
@@ -775,3 +860,87 @@ class OfflineSPOTArgs(OfflineDeterministicActorCriticArgs):
     iwae: bool = False
     lambd_cool: bool = False
     lambd_end: float = 0.2
+
+
+@dataclass
+class OfflineBPPOArgs:
+    """BPPO hyperparameters. Defaults match ``3rd_party/BPPO/main.py``.
+
+    ``critic_warmup_steps`` (Phase A, V/Q via MC-return/SARSA) and the actor
+    phase (Phase B, PPO-clip) share one ``--num_offline_steps`` budget --
+    ``run_bppo`` asserts ``num_offline_steps > critic_warmup_steps`` so the
+    actor phase is never silently skipped. ``bc_checkpoint`` (optional) warm-
+    starts the actor from a ``BC`` pretrained checkpoint via
+    ``BPPO.load_actor_from`` -- not the generic ``--load_checkpoint`` path,
+    which would pollute BPPO's own step counters with BC's unrelated
+    training length.
+    """
+
+    bc_checkpoint: Optional[str] = None
+    critic_warmup_steps: int = 2_000_000
+    value_lr: float = 1e-4
+    q_lr: float = 1e-4
+    target_update_freq: int = 2
+    value_hidden_dims: tuple[int, ...] = (512, 512, 512)
+    q_hidden_dims: tuple[int, ...] = (1024, 1024)
+    actor_lr: float = 1e-4
+    actor_hidden_dims: tuple[int, ...] = (1024, 1024)
+    clip_ratio: float = 0.25
+    clip_decay: float = 0.96
+    clip_decay_steps: int = 200
+    entropy_weight: float = 0.0
+    omega: float = 0.9
+
+
+@dataclass
+class OfflineUniO4Args:
+    """Uni-O4 hyperparameters. Defaults match ``3rd_party/Uni-O4/main.py``
+    (a separate default config from BPPO's own script -- note
+    ``actor_hidden_dims``/``omega`` differ from ``OfflineBPPOArgs``'s
+    defaults on purpose).
+
+    Shares one critic across the ensemble (see ``rl_garden/algorithms
+    /unio4.py``'s module docstring), so there is no per-member value/Q
+    config here -- ``critic_warmup_steps``/``value_lr``/etc. below configure
+    that one shared critic, identical in shape to ``OfflineBPPOArgs``'s.
+    """
+
+    critic_warmup_steps: int = 2_000_000
+    value_lr: float = 1e-4
+    q_lr: float = 1e-4
+    target_update_freq: int = 2
+    value_hidden_dims: tuple[int, ...] = (512, 512, 512)
+    q_hidden_dims: tuple[int, ...] = (1024, 1024)
+    num_policies: int = 4
+    bc_ensemble_steps: int = 400_000
+    alpha_bc: float = 0.1
+    actor_lr: float = 1e-4
+    actor_hidden_dims: tuple[int, ...] = (256, 256, 256)
+    clip_ratio: float = 0.25
+    clip_decay: float = 0.96
+    clip_decay_steps: int = 200
+    entropy_weight: float = 0.0
+    omega: float = 0.7
+
+
+@dataclass
+class OfflineUniO4OPEArgs(OfflineUniO4Args):
+    """UniO4OPE: Uni-O4 with dynamics-model OPE gating (Milestone A, see
+    ``rl_garden/algorithms/unio4_ope.py``). Dynamics hyperparameters default
+    to ``3rd_party/Uni-O4/transition_model/configs/gym/default.py``'s values
+    (shared across halfcheetah/hopper/walker2d -- task configs there only
+    ever override ``rollout_length``/``penalty_coef``, both dead for this
+    call path, see ``unio4_ope.py``'s module docstring)."""
+
+    dynamics_hidden_dims: tuple[int, ...] = (200, 200, 200, 200)
+    dynamics_n_ensemble: int = 7
+    dynamics_n_elites: int = 5
+    dynamics_lr: float = 1e-3
+    dynamics_weight_decay: tuple[float, ...] = (2.5e-5, 5e-5, 7.5e-5, 7.5e-5, 1e-4)
+    dynamics_max_epochs_since_update: int = 5
+    dynamics_max_epochs: Optional[int] = None
+    dynamics_batch_size: int = 256
+    dynamics_holdout_ratio: float = 0.2
+    ope_rollout_length: int = 1000
+    ope_rollout_batch_size: int = 512
+    ope_gating_freq: int = 100

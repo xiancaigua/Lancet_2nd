@@ -23,14 +23,23 @@ platforms can be integrated without creating platform-specific training entrypoi
   EDAC, SPOT, ReBRAC, FQL, QGF, QAM, TD3+BC, AWAC, and multitask TDMPC2.
 - **Offline-to-online:** WSRL, Cal-QL, IQL, AWAC, SPOT, and ACFQL pretraining,
   warm start, and online fine-tuning.
-- **Observations:** flat state tensors and dict observations containing RGB, depth,
-  proprioception, or mixed vector inputs.
+- **Observations:** a single strict Dict contract -- a ``state`` vector key
+  (any low-dim signal, proprioception included, folds into it), optional
+  ``state_<name>`` auxiliary/privileged low-dim keys, and any number of
+  ``rgb_<camera>``/``depth_<camera>`` image keys. Actor and critic can use
+  asymmetric observation groups, allowing privileged state visible only to the
+  critic (every critic-bearing algorithm except the recurrent/transformer
+  variants; ``encoder_sharing`` is inferred automatically when asymmetric
+  ``obs_groups`` are provided).
 - **Visual encoders:** PlainConv, ResNet, DrQ-v2 conv, 3D CNN, and ViT backbones
   with configurable image-key fusion, pooling, augmentation, and proprioception
   fusion. Actor and critic share one encoder by default; SAC-family and PPO-family
   policies can opt into independent actor/critic encoder architectures.
-- **Replay:** tensor, dict, Monte-Carlo return, and PPO rollout buffers with
+- **Replay:** dict, Monte-Carlo return, PPO rollout, and sequence buffers with
   explicit storage and sample devices.
+- **Model-based RL:** world model base class, imagine rollout, MPPI planner, and
+  `ModelBasedAlgorithm` base for learning + planning models (TD-MPC2, DreamerV3
+  for state and pixels; see [`docs/guides/dreamer-v3.md`](docs/guides/dreamer-v3.md)).
 - **Environment backends:** a registry-based interface with ManiSkill, RoboTwin,
   IsaacLab, MuJoCo, MuJoCo Warp (GPU), Minari, legacy D4RL/Adroit/Kitchen, a
   real-robot Franka backend, and a template for adding further platforms.
@@ -52,8 +61,10 @@ rl_garden/
 ├── integrations/  # Optional RLinf/Ray adapters (offline, SAC/RLPD, FSDP PPO)
 ├── models/        # ACT and reward models
 ├── networks/      # Actor, critic, value, and backbone modules
+├── planners/      # Decision-time planners (MPPI)
 ├── policies/      # Algorithm policy composition
-└── training/      # Registered online, offline, and off2on training packages
+├── training/      # Registered online, offline, and off2on training packages
+└── world_models/  # World model base, imagination, latent consistency (TD-MPC2)
 robot_infra/       # Optional submodule (rlgarden-robot-infra): controllers, teleoperation
 real_world/        # Optional submodule (rlgarden-real-world): ActorLoop/LearnerLoop, franka_real backend
 examples/          # Thin dispatchers and specialized experiment entrypoints
@@ -92,8 +103,8 @@ argument selects the algorithm:
 
 | Stage | Entrypoint | Registered algorithms |
 |---|---|---|
-| Online | `examples/train_online.py` | `sac`, `ppo`, `drqv2`, `flash_sac`, `td3`, `rlpd`, `rlpd_hybrid`, `tdmpc2`, `dppo`, `sac_flow`, `acrlpd`, `recurrent_sac`, `recurrent_ppo`, `transformer_sac`, `transformer_ppo`, `dagger`, `policy_distillation` |
-| Offline | `examples/pretrain_offline.py` | `bc`, `diffusion_bc`, `vision_diffusion_bc`, `flow_bc`, `iql`, `cql`, `calql`, `bcq`, `plas`, `edac`, `spot`, `rebrac`, `fql`, `qgf`, `qam`, `wsrl`, `awac`, `td3_bc`, `tdmpc2_multitask` |
+| Online | `examples/train_online.py` | `sac`, `ppo`, `drqv2`, `flash_sac`, `td3`, `rlpd`, `rlpd_hybrid`, `tdmpc2`, `dreamer_v3`, `dppo`, `sac_flow`, `acrlpd`, `recurrent_sac`, `recurrent_ppo`, `transformer_sac`, `transformer_ppo`, `dagger`, `policy_distillation` |
+| Offline | `examples/pretrain_offline.py` | `bc`, `diffusion_bc`, `flow_bc`, `iql`, `cql`, `calql`, `bcq`, `plas`, `edac`, `spot`, `rebrac`, `fql`, `qgf`, `qam`, `wsrl`, `awac`, `td3_bc`, `tdmpc2_multitask` |
 | Offline-to-online | `examples/train_off2on.py` | `wsrl`, `calql`, `iql`, `awac`, `spot`, `acfql` |
 
 Every registered algorithm's exact args and defaults can be listed with
@@ -141,10 +152,10 @@ Visual SAC and PPO:
 
 ```bash
 python examples/train_online.py sac \
-  --env-id PickCube-v1 --obs-mode rgb --encoder plain_conv
+  --env-id PickCube-v1 --obs.rgb base_camera --encoder.backbone plain_conv
 
 python examples/train_online.py ppo \
-  --env-id PickCube-v1 --obs-mode rgb --encoder plain_conv
+  --env-id PickCube-v1 --obs.rgb base_camera --encoder.backbone plain_conv
 ```
 
 Additional preset-backed entrypoints include:
@@ -157,7 +168,7 @@ python examples/train_online.py ppo \
 python examples/train_online.py ppo \
   --config configs/online/ppo_rgb.yaml
 python examples/train_online.py drqv2 \
-  --config configs/online/drqv2_rgb.yaml
+  --config configs/online/drqv2_rgbd.yaml
 ```
 
 ### Offline Pretraining
@@ -203,7 +214,7 @@ arguments use a nested namespace. For example, PPO on RoboTwin:
 python examples/train_online.py ppo \
   --env-backend robotwin \
   --env-id place_empty_cup \
-  --obs-mode rgb \
+  --obs.rgb head \
   --robotwin.robotwin-root /path/to/RoboTwin
 ```
 
@@ -226,10 +237,14 @@ environment that isn't wrapping an existing simulator (`--env-backend custom
 
 ## Visual Training
 
-Use `--encoder plain_conv` for the lightweight CNN path, a ResNet name such as
-`--encoder resnet10`/`resnet18`, `--encoder drqv2_conv` for DrQ-v2's conv stack,
-`--encoder cnn3d` for volumetric/stacked-frame input, or `--encoder vit` for the
-ViT path. Image keys can be fused in two ways:
+Every algorithm shares one observation/encoder CLI surface: `--obs.*` decides
+*what* is observed, `--encoder.*` decides *how* any images are encoded (see
+[the configuration guide](docs/guides/configuration.md#observation-and-encoder-configuration)).
+Use `--encoder.backbone plain_conv` for the lightweight CNN path, a ResNet name
+such as `--encoder.backbone resnet10`/`resnet18`, `--encoder.backbone
+drqv2_conv` for DrQ-v2's conv stack, `--encoder.backbone cnn3d` for
+volumetric/stacked-frame input, or `--encoder.backbone vit` for the ViT path.
+Image keys can be fused in two ways:
 
 - `stack_channels`: concatenate visual keys before a single encoder. This is the
   default and the simplest path for a single RGB stream.
@@ -241,11 +256,11 @@ Example with a pretrained ResNet backbone:
 ```bash
 python examples/train_online.py sac \
   --env-id PickCube-v1 \
-  --obs-mode rgb \
-  --encoder resnet10 \
-  --image-fusion-mode per_key \
-  --pretrained-weights resnet10-imagenet \
-  --freeze-resnet-backbone
+  --obs.rgb base_camera \
+  --encoder.backbone resnet10 \
+  --encoder.image-fusion-mode per_key \
+  --encoder.pretrained-weights resnet10-imagenet \
+  --encoder.freeze-resnet-backbone
 ```
 
 ViT example:
@@ -253,20 +268,36 @@ ViT example:
 ```bash
 python examples/train_online.py sac \
   --env-id PickCube-v1 \
-  --obs-mode rgb \
-  --image-fusion-mode per_key \
-  --encoder vit
+  --obs.rgb base_camera \
+  --encoder.image-fusion-mode per_key \
+  --encoder.backbone vit
 ```
 
-`--freeze-resnet-backbone` keeps the stem and residual blocks fixed while leaving
-the pooling/bottleneck head trainable. `--freeze-resnet-encoder` freezes the full
-visual extractor. By default, actor and critic (SAC-family and PPO-family) share
-one encoder instance; actor updates detach encoder features while critic/value
-updates train it. `--critic-encoder <name>` opts a policy into an independently
-architected critic encoder (e.g. an MLP critic over state paired with a ResNet
-actor over images) — when set, the actor's own encoder trains through the actor
-loss instead of relying on the critic's gradient. This is an advanced, opt-in
-path; leaving it unset keeps today's shared-encoder behavior unchanged.
+`--encoder.freeze-resnet-backbone` keeps the stem and residual blocks fixed
+while leaving the pooling/bottleneck head trainable.
+`--encoder.freeze-resnet-encoder` freezes the full visual extractor.
+
+Actor/critic encoder sharing is the per-algorithm `encoder_sharing` default
+(`shared_critic_grad` for almost every algorithm, including PPO; `shared`
+only for IDQL/QGF). When asymmetric `obs_groups` (actor observes different
+keys than critic) are provided, `encoder_sharing` is automatically inferred to
+`separate`; use `--print-config` to inspect the resolved value and its origin.
+You may override this with `--encoder-sharing` to explicitly choose a value,
+though a non-`separate` override contradicting asymmetric groups raises an error.
+`--obs-groups.actor`/`--obs-groups.critic` split
+which observation keys each consumes (asymmetric/privileged critic, e.g. a
+state-only critic paired with an image-observing actor); `--critic-encoder.*`
+gives the critic its own encoder hyperparameters, meaningful only together with
+asymmetric `--obs-groups`:
+
+```bash
+python examples/train_online.py sac \
+  --env-id PickCube-v1 \
+  --obs.rgb base_camera \
+  --obs-groups.actor rgb_base_camera \
+  --obs-groups.critic rgb_base_camera state \
+  --critic-encoder.backbone resnet10
+```
 
 Torchvision-style ResNet checkpoints must be converted to rl-garden parameter names:
 
@@ -302,27 +333,26 @@ iql = IQL(
 bc = BC(env=env, net_arch=[256, 256])
 ```
 
-Policies accept custom extractors through `policy_kwargs`:
+Algorithms accept `encoder_config`/`obs_groups`/`critic_encoder_config`/
+`encoder_sharing` directly; the algorithm never branches on the observation
+space's type -- a state-only `Box` normalizes to `Dict({"state": Box})` and a
+`Dict` with `rgb_<cam>`/`depth_<cam>` keys is encoded through the same path:
 
 ```python
 from rl_garden.algorithms import SAC
-from rl_garden.encoders import CombinedExtractor, resnet_encoder_factory
+from rl_garden.encoders import EncoderConfig
 
 agent = SAC(
-    env=env,
-    policy_kwargs={
-        "features_extractor_class": CombinedExtractor,
-        "features_extractor_kwargs": {
-            "image_keys": ("rgb",),
-            "image_encoder_factory": resnet_encoder_factory("resnet10"),
-            "fusion_mode": "per_key",
-        },
-    },
+    env=env,  # observation_space is Dict({"state": ..., "rgb_base_camera": ...})
+    encoder_config=EncoderConfig(backbone="resnet10", image_fusion_mode="per_key"),
 )
 ```
 
-Box observations select flatten/tensor components; dict observations select the
-combined extractor and dict replay path.
+`rl_garden.encoders.build_observation_encoder(observation_space,
+encoder_config, schema=...)` is the lower-level Layer B entry point algorithms
+call internally (via `ObservationEncoderMixin`,
+`rl_garden/algorithms/_observation.py`) to build the actual
+`FlattenExtractor`/`CombinedExtractor` feature extractor.
 
 ## Robot Infrastructure and Reward Models
 

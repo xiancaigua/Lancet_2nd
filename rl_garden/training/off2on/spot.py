@@ -9,16 +9,18 @@ starts noisy rollout immediately at the switch).
 
 from dataclasses import dataclass
 
+from rl_garden.common.cli_args import ObservationArgs
 from rl_garden.common.env_args import EnvBackendArgs
 from rl_garden.training.off2on._args import SPOTOff2OnTrainingArgs
 from rl_garden.training.off2on._registry import registry
 
 
 @dataclass
-class SPOTOff2OnArgs(SPOTOff2OnTrainingArgs, EnvBackendArgs):
+class SPOTOff2OnArgs(SPOTOff2OnTrainingArgs, ObservationArgs, EnvBackendArgs):
     """SPOT off2on args: plain twin-critic TD3 backbone, no warmup.
 
-    Box observations only; pass ``--obs_mode state``.
+    State-only observations by default; pass ``--obs.rgb <camera>`` for
+    Dict/RGBD observations.
     """
 
     n_critics: int = 2
@@ -28,9 +30,18 @@ class SPOTOff2OnArgs(SPOTOff2OnTrainingArgs, EnvBackendArgs):
 
 
 def build_spot(args: SPOTOff2OnArgs, env, eval_env, logger, checkpoint_dir):
+    from rl_garden.common.cli_args import resolve_critic_encoder_config, resolve_obs_groups_config
     from rl_garden.algorithms import Off2OnSPOT
     from rl_garden.training.inspection import construct_agent
     from rl_garden.training.off2on._args import initial_training_phase_from_args
+
+    image_kwargs: dict = {
+        "encoder_config": args.encoder if args.obs.is_visual else None,
+        "obs_groups": resolve_obs_groups_config(args),
+        "critic_encoder_config": resolve_critic_encoder_config(args),
+    }
+    if args.encoder_sharing is not None:
+        image_kwargs["encoder_sharing"] = args.encoder_sharing
 
     agent = construct_agent(
         Off2OnSPOT,
@@ -96,6 +107,7 @@ def build_spot(args: SPOTOff2OnArgs, env, eval_env, logger, checkpoint_dir):
         checkpoint_freq=args.checkpoint_freq,
         save_replay_buffer=args.save_replay_buffer,
         save_final_checkpoint=args.save_final_checkpoint,
+        **image_kwargs,
     )
     if args.load_checkpoint is not None:
         agent.load(args.load_checkpoint, load_replay_buffer=args.load_replay_buffer)
@@ -108,4 +120,11 @@ def run_spot(args: SPOTOff2OnArgs) -> None:
     run_off2on(args, build_agent=build_spot, algorithm="spot")
 
 
-registry.register("spot", SPOTOff2OnArgs, run_spot)
+
+
+def _off2_on_spot_algorithm_cls() -> type:
+    from rl_garden.algorithms import Off2OnSPOT
+
+    return Off2OnSPOT
+
+registry.register("spot", SPOTOff2OnArgs, run_spot, algorithm_cls=_off2_on_spot_algorithm_cls)

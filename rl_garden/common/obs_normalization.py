@@ -1,13 +1,29 @@
-"""Optional obs mean/std normalization for Box-observation policies.
+"""Optional obs mean/std normalization, applied by whichever policy owns an
+``ObsNormalizingMixin``.
 
 ``ObsNormalizingMixin`` stores normalization statistics as policy buffers so
-they round-trip through ``state_dict()`` (checkpoint save/load) automatically,
-and applies them inside ``extract_features()`` so every consumer of features
-(training, eval, and Off2On online rollout) sees normalized observations
-through a single entry point. Statistics are fit once from the offline
-dataset and frozen afterward (Off2On online rollout does not update them),
-matching CORL's ``compute_mean_std``/``normalize_states`` convention for
-TD3-BC/AWAC.
+they round-trip through ``state_dict()`` (checkpoint save/load)
+automatically. Statistics are fit once from the offline dataset and frozen
+afterward (Off2On online rollout does not update them), matching CORL's
+``compute_mean_std``/``normalize_states`` convention.
+
+WHERE the mixin's ``_normalize_obs`` is applied is each caller's own choice,
+not fixed by this module: ``TD3BCPolicy``/``BCQPolicy``/``PLASPolicy``
+normalize the raw state entries (``schema.state_keys`` -- ``"state"`` plus
+any ``state_<name>`` keys, concatenated/normalized/split back together)
+inside ``extract_features()`` *before* the features extractor runs -- CORL's
+own semantics, and the only choice that is meaningful for a Dict+image
+schema (the extractor's own image branch is never touched). ``AWACPolicy``
+instead normalizes the extractor's
+output features (state-only by convention there, so numerically equivalent
+to normalizing the raw state); since ``encoder_sharing="separate"`` gives it
+a critic_extractor whose output dim can differ from the actor extractor's,
+``AWACPolicy`` registers a second, ``suffix="critic"`` buffer pair only in
+that case (the default shared case keeps exactly one buffer pair, unchanged).
+
+Each buffer pair is named ``obs_mean<suffix>``/``obs_std<suffix>`` --
+``suffix=""`` (the default) reproduces the original unsuffixed
+``obs_mean``/``obs_std`` names every existing caller already relies on.
 """
 from __future__ import annotations
 
@@ -15,23 +31,28 @@ import torch
 
 
 class ObsNormalizingMixin:
-    """Mixin for Box-observation policies that normalize obs by mean/std."""
+    """Mixin giving a policy mean/std buffers plus fit/normalize helpers;
+    see the module docstring for where each caller applies them."""
 
-    def _register_obs_normalizer(self, obs_dim: int) -> None:
-        self.register_buffer("obs_mean", torch.zeros(obs_dim))
-        self.register_buffer("obs_std", torch.ones(obs_dim))
+    def _register_obs_normalizer(self, obs_dim: int, *, suffix: str = "") -> None:
+        self.register_buffer(f"obs_mean{suffix}", torch.zeros(obs_dim))
+        self.register_buffer(f"obs_std{suffix}", torch.ones(obs_dim))
 
-    def fit_obs_normalizer(self, obs: torch.Tensor, eps: float = 1e-3) -> None:
-        """Fit ``obs_mean``/``obs_std`` from a ``(N, obs_dim)`` tensor of
-        observations. Intended to be called once, from the offline dataset,
-        before training starts."""
-        mean = obs.mean(dim=0).to(self.obs_mean.device, self.obs_mean.dtype)
-        std = obs.std(dim=0).to(self.obs_std.device, self.obs_std.dtype) + eps
-        self.obs_mean.copy_(mean)
-        self.obs_std.copy_(std)
+    def fit_obs_normalizer(self, obs: torch.Tensor, eps: float = 1e-3, *, suffix: str = "") -> None:
+        """Fit ``obs_mean<suffix>``/``obs_std<suffix>`` from a ``(N, obs_dim)``
+        tensor of observations. Intended to be called once, from the offline
+        dataset, before training starts."""
+        obs_mean = getattr(self, f"obs_mean{suffix}")
+        obs_std = getattr(self, f"obs_std{suffix}")
+        mean = obs.mean(dim=0).to(obs_mean.device, obs_mean.dtype)
+        std = obs.std(dim=0).to(obs_std.device, obs_std.dtype) + eps
+        obs_mean.copy_(mean)
+        obs_std.copy_(std)
 
-    def _normalize_obs(self, obs: torch.Tensor) -> torch.Tensor:
-        return (obs - self.obs_mean) / self.obs_std
+    def _normalize_obs(self, obs: torch.Tensor, *, suffix: str = "") -> torch.Tensor:
+        obs_mean = getattr(self, f"obs_mean{suffix}")
+        obs_std = getattr(self, f"obs_std{suffix}")
+        return (obs - obs_mean) / obs_std
 
 
 class RunningObsNormalizer(torch.nn.Module):

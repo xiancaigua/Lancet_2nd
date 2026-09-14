@@ -4,6 +4,7 @@ Mirrors the fixture style of test_wsrl.py, but targets Off2OnCalQL and
 focuses on what actually differs from WSRL's defaults: no warmup, mixed
 replay retained by default, adaptive mixing ratio, CQL retained online.
 """
+import numpy as np
 from unittest.mock import MagicMock
 
 import pytest
@@ -11,15 +12,16 @@ import torch
 from gymnasium import spaces
 
 from rl_garden.algorithms.off2on_calql import Off2OnCalQL
-from rl_garden.buffers import MCTensorReplayBuffer, TensorReplayBuffer
+from rl_garden.buffers import ReplayBuffer
+from rl_garden.buffers.mc_buffer import MCReplayBuffer
 
 
 @pytest.fixture
 def simple_env():
     env = MagicMock()
     env.num_envs = 2
-    env.single_observation_space = spaces.Box(low=-1, high=1, shape=(4,), dtype=float)
-    env.single_action_space = spaces.Box(low=-1, high=1, shape=(2,), dtype=float)
+    env.single_observation_space = spaces.Box(low=-1, high=1, shape=(4,), dtype=np.float32)
+    env.single_action_space = spaces.Box(low=-1, high=1, shape=(2,), dtype=np.float32)
     return env
 
 
@@ -56,13 +58,13 @@ def _fill_buffer(buffer, num_steps: int, marker: float = 0.0) -> None:
     trajectory -- the MC buffer only samples/counts complete trajectories.
     """
     n = buffer.num_envs
-    obs_dim = buffer.obs.shape[-1]
+    obs_dim = buffer.obs["state"].shape[-1]
     act_dim = buffer.actions.shape[-1]
     for step in range(num_steps):
         is_last = step == num_steps - 1
         buffer.add(
-            torch.full((n, obs_dim), marker),
-            torch.full((n, obs_dim), marker + 1.0),
+            {"state": torch.full((n, obs_dim), marker)},
+            {"state": torch.full((n, obs_dim), marker + 1.0)},
             torch.zeros(n, act_dim),
             torch.zeros(n),
             torch.ones(n) if is_last else torch.zeros(n),
@@ -89,6 +91,72 @@ class TestOff2OnCalQLDefaults:
         )
 
 
+def _sarsa_agent(simple_env, **overrides):
+    kwargs = dict(
+        env=simple_env,
+        buffer_size=100,
+        buffer_device="cpu",
+        learning_starts=10,
+        batch_size=8,
+        gamma=0.99,
+        tau=0.005,
+        training_freq=4,
+        utd=1.0,
+        net_arch={"pi": [32, 32], "qf": [32, 32]},
+        n_critics=4,
+        critic_subsample_size=2,
+        use_cql_loss=True,
+        cql_n_actions=4,
+        cql_alpha=1.0,
+        cql_autotune_alpha=False,
+        use_calql=True,
+        calql_bound_random_actions=False,
+        sarsa_hidden_dims=(16,),
+        device="cpu",
+        seed=42,
+    )
+    kwargs.update(overrides)
+    return Off2OnCalQL(**kwargs)
+
+
+class TestOff2OnCalQLSarsaReferenceCheckpoint:
+    def test_sarsa_reference_checkpoint_roundtrips(self, simple_env):
+        source = _sarsa_agent(simple_env, use_sarsa_reference=True)
+        _fill_buffer(source.replay_buffer, num_steps=8)
+        source.train(1)
+
+        sd = source.state_dict()
+        assert "sarsa_q_net" in sd["extra"]
+
+        target = _sarsa_agent(simple_env, use_sarsa_reference=True)
+        target.load_state_dict(sd)
+
+        for src_p, tgt_p in zip(
+            source.sarsa_q_net.parameters(), target.sarsa_q_net.parameters()
+        ):
+            assert torch.equal(src_p, tgt_p)
+
+    def test_old_checkpoint_without_sarsa_loads_into_sarsa_enabled_agent(self, simple_env):
+        """Backward compatibility: a checkpoint saved before this feature
+        existed (use_sarsa_reference=False, no sarsa_q_net keys) must load
+        cleanly into a use_sarsa_reference=True agent, leaving the freshly
+        initialized SARSA net untouched rather than raising."""
+        old = _sarsa_agent(simple_env, use_sarsa_reference=False)
+        _fill_buffer(old.replay_buffer, num_steps=8)
+        old.train(1)
+        sd = old.state_dict()
+        assert "sarsa_q_net" not in sd["extra"]
+        assert "sarsa_q_optimizer" not in sd["optimizers"]
+
+        target = _sarsa_agent(simple_env, use_sarsa_reference=True)
+        before = [p.clone() for p in target.sarsa_q_net.parameters()]
+        target.load_state_dict(sd)
+        after = list(target.sarsa_q_net.parameters())
+
+        for b, a in zip(before, after):
+            assert torch.equal(b, a)
+
+
 class TestOff2OnCalQLMixedBatchSampling:
     """Mixed-batch online sampling, including the adaptive ("auto") ratio."""
 
@@ -111,8 +179,8 @@ class TestOff2OnCalQLMixedBatchSampling:
             online_replay_mode="mixed", offline_data_ratio=0.5
         )
         sample = off2on_calql_agent._sample_batch(off2on_calql_agent.batch_size)
-        assert sample.obs.shape[0] == off2on_calql_agent.batch_size
-        assert torch.all(sample.obs[:, 0] == 42.0)
+        assert sample.obs["state"].shape[0] == off2on_calql_agent.batch_size
+        assert torch.all(sample.obs["state"][:, 0] == 42.0)
 
     def test_mixed_batch_combines_online_and_offline(self, off2on_calql_agent):
         _fill_buffer(off2on_calql_agent.replay_buffer, 5, marker=10.0)
@@ -121,8 +189,8 @@ class TestOff2OnCalQLMixedBatchSampling:
         )
         _fill_buffer(off2on_calql_agent.replay_buffer, 5, marker=99.0)
         sample = off2on_calql_agent._sample_batch(off2on_calql_agent.batch_size)
-        offline_count = (sample.obs[:, 0] == 10.0).sum().item()
-        online_count = (sample.obs[:, 0] == 99.0).sum().item()
+        offline_count = (sample.obs["state"][:, 0] == 10.0).sum().item()
+        online_count = (sample.obs["state"][:, 0] == 99.0).sum().item()
         assert offline_count + online_count == off2on_calql_agent.batch_size
         assert offline_count == 2
         assert online_count == 6
@@ -134,7 +202,7 @@ class TestOff2OnCalQLMixedBatchSampling:
         )
         _fill_buffer(off2on_calql_agent.replay_buffer, 5, marker=99.0)
         sample = off2on_calql_agent._sample_batch(off2on_calql_agent.batch_size)
-        assert torch.all(sample.obs[:, 0] == 99.0)
+        assert torch.all(sample.obs["state"][:, 0] == 99.0)
 
     def test_mixed_batch_invalid_ratio_raises(self, off2on_calql_agent):
         with pytest.raises(ValueError, match="offline_data_ratio"):
@@ -162,8 +230,8 @@ class TestOff2OnCalQLMixedBatchSampling:
         assert off2on_calql_agent._resolve_offline_data_ratio() == pytest.approx(0.25)
 
         sample = off2on_calql_agent._sample_batch(off2on_calql_agent.batch_size)
-        offline_count = (sample.obs[:, 0] == 10.0).sum().item()
-        online_count = (sample.obs[:, 0] == 99.0).sum().item()
+        offline_count = (sample.obs["state"][:, 0] == 10.0).sum().item()
+        online_count = (sample.obs["state"][:, 0] == 99.0).sum().item()
         assert offline_count + online_count == off2on_calql_agent.batch_size
         assert offline_count == 2
         assert online_count == 6
@@ -176,7 +244,7 @@ class TestOff2OnCalQLMixedBatchSampling:
 
         assert off2on_calql_agent._resolve_offline_data_ratio() == 1.0
         sample = off2on_calql_agent._sample_batch(off2on_calql_agent.batch_size)
-        assert torch.all(sample.obs[:, 0] == 42.0)
+        assert torch.all(sample.obs["state"][:, 0] == 42.0)
 
     def test_mixed_batch_invalid_ratio_string_raises(self, off2on_calql_agent):
         with pytest.raises(ValueError, match="offline_data_ratio"):
@@ -259,12 +327,12 @@ def test_empty_no_online_cql_uses_plain_online_replay(simple_env):
         seed=42,
     )
     _fill_buffer(agent.replay_buffer, 5, marker=1.0)
-    assert isinstance(agent.replay_buffer, MCTensorReplayBuffer)
+    assert isinstance(agent.replay_buffer, MCReplayBuffer)
 
     agent.switch_to_online_mode(online_replay_mode="empty")
 
     assert not agent.use_cql_loss
-    assert isinstance(agent.replay_buffer, TensorReplayBuffer)
+    assert isinstance(agent.replay_buffer, ReplayBuffer)
     assert len(agent.replay_buffer) == 0
     assert agent._replay_buffer_step_kwargs(
         torch.zeros(agent.num_envs, dtype=torch.bool),
@@ -273,14 +341,14 @@ def test_empty_no_online_cql_uses_plain_online_replay(simple_env):
 
     n = agent.replay_buffer.num_envs
     agent.replay_buffer.add(
-        torch.zeros(n, 4),
-        torch.ones(n, 4),
+        {"state": torch.zeros(n, 4)},
+        {"state": torch.ones(n, 4)},
         torch.zeros(n, 2),
         torch.zeros(n),
         torch.zeros(n),
     )
     sample = agent._sample_batch(agent.batch_size)
-    assert sample.obs.shape[0] == agent.batch_size
+    assert sample.obs["state"].shape[0] == agent.batch_size
 
 
 def test_off2on_calql_one_update_smoke(off2on_calql_agent):
@@ -300,11 +368,11 @@ class _ScriptedEvalVecEnv:
 
     def reset(self):
         self._t = 0
-        return torch.zeros(self.num_envs, 4), {}
+        return {"state": torch.zeros(self.num_envs, 4)}, {}
 
     def step(self, actions):
         self._t += 1
-        obs = torch.zeros(self.num_envs, 4)
+        obs = {"state": torch.zeros(self.num_envs, 4)}
         rewards = torch.ones(self.num_envs)
         done = self._t % self.episode_len == 0
         terminations = torch.full((self.num_envs,), done, dtype=torch.bool)

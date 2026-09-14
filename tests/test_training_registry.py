@@ -88,6 +88,8 @@ def test_phase_registries_discover_expected_algorithms():
         "sac_flow",
         "ppo",
         "dppo",
+        "diffusion_cm_distill_online",
+        "flow_ppo",
         "recurrent_ppo",
         "recurrent_sac",
         "transformer_ppo",
@@ -102,6 +104,7 @@ def test_phase_registries_discover_expected_algorithms():
         "jsrl",
         "acrlpd",
         "tdmpc2",
+        "dreamer_v3",
         "dagger",
         "policy_distillation",
         "gail",
@@ -110,9 +113,13 @@ def test_phase_registries_discover_expected_algorithms():
         "a2a_bc",
         "bc",
         "diffusion_bc",
-        "vision_diffusion_bc",
+        "consistency_distill_bc",
         "flow_bc",
+        "mean_flow_bc",
         "fql",
+        "floq",
+        "value_flows",
+        "fino",
         "hilp",
         "idql",
         "opal",
@@ -130,8 +137,24 @@ def test_phase_registries_discover_expected_algorithms():
         "spot",
         "bcq",
         "plas",
+        "bppo",
+        "unio4",
+        "unio4_ope",
     }
-    assert set(off2on.entries()) == {"wsrl", "calql", "iql", "awac", "acfql", "spot", "so2", "lancet", "lancet_v1"}
+    assert set(off2on.entries()) == {
+        "wsrl",
+        "calql",
+        "iql",
+        "awac",
+        "acfql",
+        "floq",
+        "value_flows",
+        "fino",
+        "spot",
+        "so2",
+        "lancet",
+        "lancet_v1",
+    }
 
 
 def test_logging_environment_variables_are_not_configuration(monkeypatch):
@@ -145,11 +168,12 @@ def test_logging_environment_variables_are_not_configuration(monkeypatch):
 
 
 def test_sac_disables_eval_env_when_eval_frequency_is_zero():
-    from rl_garden.training.online.sac import SACArgs, _sac_env_request
+    from rl_garden.common.env_args import make_env_request
+    from rl_garden.training.online.sac import SACArgs
 
     args = SACArgs(eval_freq=0)
 
-    assert not _sac_env_request(args, "test-run").create_eval_env
+    assert not make_env_request(args, "test-run").create_eval_env
 
 
 def test_print_config_is_recursive_and_does_not_create_run_dir(tmp_path):
@@ -232,7 +256,9 @@ def test_checked_in_presets_pass_static_preflight():
         (online, "ppo", "configs/online/ppo_state.yaml"),
         (online, "ppo", "configs/online/ppo_rgb.yaml"),
         (online, "ppo", "configs/online/ppo_robotwin_place_empty_cup_rgb.yaml"),
-        (online, "drqv2", "configs/online/drqv2_rgb.yaml"),
+        (online, "drqv2", "configs/online/drqv2_rgbd.yaml"),
+        (online, "td3", "configs/online/td3_rgbd.yaml"),
+        (online, "tdmpc2", "configs/online/tdmpc2_rgb.yaml"),
         (off2on, "wsrl", "configs/off2on/wsrl.yaml"),
         (off2on, "wsrl", "configs/off2on/wsrl_rgb.yaml"),
     ]
@@ -294,9 +320,7 @@ def test_runtime_normalization_is_reflected_in_inputs_and_sources(monkeypatch):
 def test_print_config_has_no_static_algorithm_inference(capsys):
     from rl_garden.training.online import registry
 
-    registry.run_cli(
-        ["sac", "--obs-mode", "state", "--log-type", "none", "--print-config"]
-    )
+    registry.run_cli(["sac", "--log-type", "none", "--print-config"])
     payload = json.loads(capsys.readouterr().out)
 
     assert payload["algorithm"] == {}
@@ -339,9 +363,11 @@ def test_preflight_rejects_explicit_inactive_visual_field():
     from rl_garden.common.effective_config import ConfigError
     from rl_garden.training.online import registry
 
-    command = registry.parse_command(["sac", "--obs-mode", "state", "--encoder", "vit"])
+    # State-only by default (no --obs.rgb/--obs.depth); --encoder.backbone is
+    # inactive without a visual --obs.
+    command = registry.parse_command(["sac", "--encoder.backbone", "vit"])
 
-    with pytest.raises(ConfigError, match="encoder.*inactive"):
+    with pytest.raises(ConfigError, match="encoder.backbone.*inactive"):
         registry._preflight_config(command)
 
 
@@ -392,8 +418,8 @@ def test_explain_param_reports_default_source(capsys):
 def test_explain_param_rejects_inactive_field():
     from rl_garden.training.online import registry
 
-    with pytest.raises(SystemExit, match="encoder.*inactive"):
-        registry.run_cli(["sac", "--obs-mode", "state", "--explain-param", "encoder"])
+    with pytest.raises(SystemExit, match="encoder.backbone.*inactive"):
+        registry.run_cli(["sac", "--explain-param", "encoder.backbone"])
 
 
 def test_dry_run_materializes_env_and_agent_without_learning(monkeypatch, capsys):
@@ -447,8 +473,6 @@ def test_dry_run_materializes_env_and_agent_without_learning(monkeypatch, capsys
         [
             "sac",
             "--dry-run",
-            "--obs-mode",
-            "state",
             "--buffer-device",
             "cpu",
             "--eval-freq",
@@ -495,8 +519,6 @@ def test_sac_dry_run_captures_exact_constructor_kwargs(
         [
             "sac",
             "--dry-run",
-            "--obs-mode",
-            "state",
             "--buffer-device",
             "cpu",
             "--buffer-size",

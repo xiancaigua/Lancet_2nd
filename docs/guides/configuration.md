@@ -39,7 +39,6 @@ the command line:
 
 ```yaml
 env_id: PickCube-v1
-obs_mode: state
 num_envs: 16
 gamma: 0.99
 ```
@@ -59,14 +58,162 @@ maniskill:
 Backend dataclasses are omitted from `inputs`; the selected backend appears once
 under `active_environment`. Explicitly
 setting an inactive field is also an error—for example, setting `robotwin.step_lim`
-while `env_backend` is `maniskill`, or setting `encoder` with `obs_mode: state`.
-This catches overrides that would otherwise look valid but have no effect.
+while `env_backend` is `maniskill`, or setting `encoder.*` to a non-default value
+while `obs` requests no `rgb`/`depth` cameras (state-only observations have
+nothing to encode). This catches overrides that would otherwise look valid but
+have no effect.
 
 Training and logging values are configured only through YAML and CLI. Environment
 variables are reserved for third-party runtime requirements such as renderer,
 cache, or external simulator paths. The removed logging variables map directly to
 `--std-log`/`--no-std-log`, `--log-type`, `--log-keywords`, `--wandb-project`,
 `--wandb-entity`, and `--wandb-group`.
+
+## Observation and encoder configuration
+
+Every algorithm shares one `obs`/`encoder`/`obs_groups`/`critic_encoder`/
+`encoder_sharing` surface (`ObservationArgs`, `rl_garden/common/cli_args.py`).
+`obs` decides *what* is observed (state / cameras / image size / frame
+stacking); it is a backend/dataset-side request, honored exactly or rejected:
+
+```yaml
+obs:
+  state: true
+  rgb: [base_camera]       # camera names -> keys "rgb_<cam>"
+  depth: []
+  extra_state: [object_pose]  # auxiliary low-dim keys -> "state_<name>"
+  image_size: [64, 64]     # (H, W); omit to use the backend's own default
+  frame_stack: 1
+encoder:
+  backbone: plain_conv    # plain_conv | resnet10 | resnet18 | vit | drqv2_conv | cnn3d
+  features_dim: 256
+```
+
+State-only is the default (`obs: {state: true}` implicitly); omit `obs`
+entirely for a state preset. `encoder` is only meaningful once `obs` requests
+at least one camera -- setting `encoder.*` to a non-default value with no
+`rgb`/`depth` cameras is a preflight error (see above). Camera names are
+backend-specific: ManiSkill sensor names (e.g. `base_camera`), RoboTwin
+`head`/`left_wrist`/`right_wrist`, OGBench's single visual camera `ogbench`,
+RLBench (`left_shoulder`/`right_shoulder`/`overhead`/`wrist`/`front`), and
+Meta-World's six fixed cameras (`corner`/`corner2`/`corner3`/`corner4`/
+`behindGripper`/`gripperPOV`).
+
+### Low-dim observations and privileged state
+
+`obs.extra_state` declares auxiliary/privileged low-dim observations beyond
+the base `state` key, creating keys named `state_<name>` in the observation
+space. These follow the same strict validation as the base `state` key: each
+must be a 1-D float vector. The privileged-critic idiom uses `obs_groups` to
+give the critic access to extra state that the actor does not see:
+
+```yaml
+obs:
+  state: true
+  rgb: [base_camera]
+  extra_state: [object_pose, gripper_state]  # creates state_object_pose, state_gripper_state
+obs_groups:
+  actor: [rgb_base_camera, state]
+  critic: [rgb_base_camera, state, state_object_pose, state_gripper_state]
+```
+
+All state keys (base `state` plus each `state_<name>`) are concatenated
+together by the encoder's proprio branch into one dense vector; there is no
+per-key MLP, only one shared proprio branch that reads all state keys.
+`encoder_sharing` controls whether that dense vector is computed once (shared)
+or twice (actor and critic each compute independently).
+
+The privileged-critic idiom also works without cameras (state-only observations):
+
+```yaml
+obs: {state: true, extra_state: [object_pose]}
+obs_groups:
+  actor: [state]
+  critic: [state, state_object_pose]
+```
+
+CLI equivalent:
+
+```bash
+--obs.state true --obs.extra-state object_pose \
+  --obs-groups.actor state --obs-groups.critic state state_object_pose
+```
+
+### Actor/critic encoder asymmetry
+
+`obs_groups` optionally splits which observation keys the actor and critic
+each consume (asymmetric/privileged critic); `critic_encoder` optionally
+gives the critic its own encoder hyperparameters:
+
+```yaml
+obs_groups:
+  actor: [rgb_base_camera]
+  critic: [rgb_base_camera, state]
+critic_encoder:
+  backbone: resnet18    # different from encoder.backbone
+  features_dim: 512
+```
+
+When asymmetric `obs_groups` are provided (actor observes different keys than
+critic), `encoder_sharing` is automatically inferred to `separate`. Use
+`--print-config` or `--explain-param encoder_sharing` to inspect the resolved
+value and its origin (`inferred (asymmetric obs_groups)`, `inferred (critic_encoder)`,
+or `<algo> default`). You may explicitly set `--encoder-sharing` to override
+the default, but a non-`separate` value that contradicts asymmetric groups
+raises `ObservationContractError` at construction time.
+
+Algorithms that support asymmetric `obs_groups` all have a critic/value head
+(every algorithm except BC-only families: BC, DiffusionBC, FlowBC, MeanFlowBC,
+A2ABC, ConsistencyDistillBC, DAgger). Algorithms with recurrent or transformer
+state abstractions (RecurrentSAC, RecurrentPPO, TransformerSAC, TransformerPPO)
+cannot use separate encoders (both cannot use `encoder_sharing="separate"`) because
+there is only one RNN/attention mechanism shared between the encoder and the heads;
+attempting to pass asymmetric `obs_groups` to these families raises
+`ObservationContractError` at construction time.
+
+**Activation rule:** `obs_groups` and `encoder_sharing` are always active.
+`critic_encoder` and the image-specific fields of `encoder` (all except
+`normalize_obs`) apply only when `obs` includes at least one camera
+(`rgb` or `depth` key). `encoder.normalize_obs` always applies.
+
+### H5 dataset observation layout
+
+Offline H5 trajectory files (`rl_garden/buffers/h5_dataset.py`) are held to
+the same strict key vocabulary as a live env: each `traj_*/obs` (or
+`/observations`) node is either a flat `Dataset` -- inferred as a state-only
+observation, wrapped into `Dict({"state": Box})` -- or a `Group` whose child
+keys must already be exactly `state`, `rgb_<cam>`, or `depth_<cam>`. Any
+other key name (e.g. a producer's own `left_shoulder_rgb`, `proprio`) raises
+`ObservationContractError` at load time; this generic loader does no
+renaming of its own. A producer with different native field names (RLBench,
+robomimic) maps them onto the contract in its own dataset loader before the
+data ever reaches an H5 file this loader reads -- see
+[RLBench Integration](rlbench-integration.md) and
+[robomimic Integration](robomimic-integration.md) for those two producers'
+own mappings.
+
+### `frame_stack` vs `cond_steps`
+
+`obs.frame_stack` (`ObservationConfig`) and `cond_steps` (the chunked-BC
+family's own args, e.g. `DiffusionBCTrainingArgs`) both add a leading
+dimension to an observation, but at different layers and for different
+reasons -- they are deliberately not merged:
+
+- `obs.frame_stack` is an **env-side** concern: the backend stacks the last
+  `frame_stack` raw image frames into a leading time dimension
+  (`ImageFrameStackWrapper`) before the observation ever reaches an
+  algorithm. It only applies to image keys (`rgb_<cam>`/`depth_<cam>`);
+  vector `state` stays single-frame.
+- `cond_steps` is an **algorithm-side** concern specific to the chunked-BC
+  imitation family (`BC`, `DiffusionBC`, `FlowBC`, `MeanFlowBC`, `A2ABC`,
+  `ConsistencyDistillBC`): it is how much observation *history* (as a time
+  dimension) the chunked-dataset loader (`load_h5_dataset_as_chunks`,
+  `horizon_steps`/`cond_steps`) keeps per training example, independent of
+  whether the underlying observation is state or image.
+
+A vision chunked-BC run can use both at once (env-side `frame_stack` on the
+raw camera feed, algorithm-side `cond_steps` on the resulting per-step
+features) -- they compose rather than substitute for each other.
 
 ## Inspect before training
 

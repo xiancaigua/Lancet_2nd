@@ -2,16 +2,25 @@ from __future__ import annotations
 
 import gymnasium as gym
 import numpy as np
+import pytest
 import torch
 from gymnasium import spaces
 from gymnasium.vector.utils import batch_space
 
 from rl_garden.algorithms import DPPO
+from rl_garden.encoders.config import EncoderConfig
 from rl_garden.envs.wrappers import ActionChunkWrapper
 
 OBS_DIM = 5
 ACTION_DIM = 2
 EPISODE_LEN = 6
+# Small + fast: "gap" pooling (unlike the default "flatten") tolerates tiny
+# images without PlainConv's flatten-layer size mismatch. Mirrors
+# tests/test_fql_core.py's own vision-test encoder config.
+IMG_SIZE = 16
+_test_encoder_config = EncoderConfig(
+    backbone="plain_conv", features_dim=16, plain_conv_pooling="gap"
+)
 
 
 class _FakeEnv(gym.Env):
@@ -53,6 +62,211 @@ class _FakeEnv(gym.Env):
 
 def _make_env(num_envs: int, act_steps: int) -> ActionChunkWrapper:
     return ActionChunkWrapper(_FakeEnv(num_envs), act_steps=act_steps)
+
+
+class _FakeVisionEnv(gym.Env):
+    """Dict/RGBD-obs sibling of _FakeEnv, SAME_STEP-autoreset, fixed episode length."""
+
+    def __init__(self, num_envs: int = 4) -> None:
+        self.num_envs = num_envs
+        self._step_count = torch.zeros(num_envs, dtype=torch.long)
+        self.single_observation_space = spaces.Dict(
+            {
+                "rgb_cam": spaces.Box(low=0, high=255, shape=(IMG_SIZE, IMG_SIZE, 3), dtype=np.uint8),
+                "state": spaces.Box(-np.inf, np.inf, (OBS_DIM,), np.float32),
+            }
+        )
+        self.observation_space = batch_space(self.single_observation_space, num_envs)
+        self.single_action_space = spaces.Box(-1.0, 1.0, (ACTION_DIM,), np.float32)
+        self.action_space = batch_space(self.single_action_space, num_envs)
+
+    def _obs(self):
+        return {
+            "rgb_cam": torch.randint(
+                0, 256, (self.num_envs, IMG_SIZE, IMG_SIZE, 3), dtype=torch.uint8
+            ),
+            "state": torch.randn(self.num_envs, OBS_DIM),
+        }
+
+    def reset(self, *, seed=None, options=None):
+        del seed, options
+        self._step_count.zero_()
+        return self._obs(), {}
+
+    def step(self, action):
+        del action
+        self._step_count += 1
+        done = self._step_count >= EPISODE_LEN
+        reward = torch.ones(self.num_envs)
+        info = {}
+        if done.any():
+            info = {
+                "final_observation": self._obs(),
+                "_final_observation": done.clone(),
+                "final_info": {"episode": {"return": (self._step_count.float() * reward)}},
+                "_final_info": done.clone(),
+            }
+            self._step_count[done] = 0
+        terminated = done.clone()
+        truncated = torch.zeros(self.num_envs, dtype=torch.bool)
+        return self._obs(), reward, terminated, truncated, info
+
+
+def _make_vision_env(num_envs: int, act_steps: int) -> ActionChunkWrapper:
+    return ActionChunkWrapper(_FakeVisionEnv(num_envs), act_steps=act_steps)
+
+
+class _FakeAsymmetricVisionEnv(gym.Env):
+    """``_FakeVisionEnv`` sibling with an extra critic-only
+    ``state_object_pose`` key (Section A's ``state_<name>`` family)."""
+
+    def __init__(self, num_envs: int = 4) -> None:
+        self.num_envs = num_envs
+        self._step_count = torch.zeros(num_envs, dtype=torch.long)
+        self.single_observation_space = spaces.Dict(
+            {
+                "rgb_cam": spaces.Box(low=0, high=255, shape=(IMG_SIZE, IMG_SIZE, 3), dtype=np.uint8),
+                "state": spaces.Box(-np.inf, np.inf, (OBS_DIM,), np.float32),
+                "state_object_pose": spaces.Box(-np.inf, np.inf, (3,), np.float32),
+            }
+        )
+        self.observation_space = batch_space(self.single_observation_space, num_envs)
+        self.single_action_space = spaces.Box(-1.0, 1.0, (ACTION_DIM,), np.float32)
+        self.action_space = batch_space(self.single_action_space, num_envs)
+
+    def _obs(self):
+        return {
+            "rgb_cam": torch.randint(
+                0, 256, (self.num_envs, IMG_SIZE, IMG_SIZE, 3), dtype=torch.uint8
+            ),
+            "state": torch.randn(self.num_envs, OBS_DIM),
+            "state_object_pose": torch.randn(self.num_envs, 3),
+        }
+
+    def reset(self, *, seed=None, options=None):
+        del seed, options
+        self._step_count.zero_()
+        return self._obs(), {}
+
+    def step(self, action):
+        del action
+        self._step_count += 1
+        done = self._step_count >= EPISODE_LEN
+        reward = torch.ones(self.num_envs)
+        info = {}
+        if done.any():
+            info = {
+                "final_observation": self._obs(),
+                "_final_observation": done.clone(),
+                "final_info": {"episode": {"return": (self._step_count.float() * reward)}},
+                "_final_info": done.clone(),
+            }
+            self._step_count[done] = 0
+        terminated = done.clone()
+        truncated = torch.zeros(self.num_envs, dtype=torch.bool)
+        return self._obs(), reward, terminated, truncated, info
+
+
+def _make_asymmetric_vision_env(num_envs: int, act_steps: int) -> ActionChunkWrapper:
+    return ActionChunkWrapper(_FakeAsymmetricVisionEnv(num_envs), act_steps=act_steps)
+
+
+def test_dppo_vision_learn_runs_and_produces_finite_losses():
+    torch.manual_seed(0)
+    env = _make_vision_env(num_envs=4, act_steps=2)
+    agent = DPPO(
+        env=env,
+        num_steps=3,
+        horizon_steps=2,
+        act_steps=2,
+        denoising_steps=5,
+        ft_denoising_steps=3,
+        actor_mlp_dims=[16, 16, 16],
+        critic_mlp_dims=[16, 16, 16],
+        update_epochs=2,
+        update_batch_size=8,
+        eval_freq=0,
+        device="cpu",
+        encoder_config=_test_encoder_config,
+    )
+    agent.learn(total_timesteps=3 * 4 * 2)
+    losses = agent.train()
+    for key, value in losses.items():
+        assert np.isfinite(value), (key, value)
+
+
+def test_dppo_vision_encoder_only_in_critic_optimizer():
+    """Gradient-isolation structural check (mirrors FQL's own precedent:
+    "a correctness test here checks parameter-set disjointness between
+    actor_optimizer and the critic's encoder, not the size of any
+    particular .grad"). The shared actor_extractor must be trained only
+    by the critic loss (DPPO._dppo_loss detaches the copy fed to the actor's
+    log-prob computation) -- so its params must sit in critic_optimizer and
+    nowhere in actor_optimizer."""
+    env = _make_vision_env(num_envs=4, act_steps=2)
+    agent = DPPO(
+        env=env,
+        num_steps=2,
+        horizon_steps=2,
+        act_steps=2,
+        denoising_steps=5,
+        ft_denoising_steps=3,
+        actor_mlp_dims=[16, 16, 16],
+        critic_mlp_dims=[16, 16, 16],
+        eval_freq=0,
+        device="cpu",
+        encoder_config=_test_encoder_config,
+    )
+    encoder_params = {id(p) for p in agent.policy.actor_extractor.parameters()}
+    actor_params = {id(p) for group in agent.actor_optimizer.param_groups for p in group["params"]}
+    critic_params = {id(p) for group in agent.critic_optimizer.param_groups for p in group["params"]}
+    assert encoder_params, "actor_extractor has no parameters -- test is vacuous"
+    assert encoder_params.isdisjoint(actor_params)
+    assert encoder_params.issubset(critic_params)
+
+
+def test_dppo_vision_encoder_not_called_once_per_denoising_step():
+    """Regression pin for the M4 design finding: the image encoder must be
+    called a small constant number of times per env-step (sample_rollout_chain,
+    _cond, predict_values each call it once, redundantly, but the obs-derived
+    features are NOT re-derived inside sample_chain's own K-step DDPM loop).
+    Isolate one _rollout_step() call directly (not the full learn() loop,
+    which also runs many training minibatches) with denoising_steps set high
+    enough that an O(K) regression would be unambiguous against the O(1)
+    (here, small-constant) expected count."""
+    torch.manual_seed(0)
+    denoising_steps = 20
+    env = _make_vision_env(num_envs=4, act_steps=2)
+    agent = DPPO(
+        env=env,
+        num_steps=3,
+        horizon_steps=2,
+        act_steps=2,
+        denoising_steps=denoising_steps,
+        ft_denoising_steps=denoising_steps,
+        actor_mlp_dims=[16, 16, 16],
+        critic_mlp_dims=[16, 16, 16],
+        eval_freq=0,
+        device="cpu",
+        encoder_config=_test_encoder_config,
+    )
+    call_count = 0
+    original_extract = agent.policy.actor_extractor.extract
+
+    def _counting_extract(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        return original_extract(*args, **kwargs)
+
+    agent.policy.actor_extractor.extract = _counting_extract
+    obs, _ = env.reset(seed=0)
+    episode_starts = torch.ones(env.num_envs, dtype=torch.bool)
+    agent._rollout_step(obs, None, episode_starts)
+    assert call_count < denoising_steps, (
+        f"expected O(1) encoder calls per env-step, not O(denoising_steps="
+        f"{denoising_steps}); got {call_count} calls -- the encoder is being "
+        "re-run inside the K-step denoising loop instead of once per step."
+    )
 
 
 def test_dppo_learn_runs_and_produces_finite_losses():
@@ -154,3 +368,150 @@ def test_dppo_bc_checkpoint_loads_into_actor_and_actor_ft(tmp_path):
         assert torch.allclose(pa, pf)
     assert not any(p.requires_grad for p in agent.policy.actor.parameters())
     assert all(p.requires_grad for p in agent.policy.actor_ft.parameters())
+
+
+def test_dppo_rejects_dict_trained_bc_checkpoint(tmp_path):
+    """Risk-1 guard: a Dict (vision) trained DiffusionBC checkpoint must be
+    rejected with a clear ValueError before DPPO attempts to load it into its
+    Box-only actor (rather than an unfriendly load_state_dict shape error)."""
+    import h5py
+    from gymnasium import spaces as gym_spaces
+
+    from rl_garden.algorithms import DiffusionBC, OfflineEnvSpec
+
+    rng = np.random.default_rng(0)
+    path = tmp_path / "vision_bc.h5"
+    with h5py.File(path, "w") as f:
+        for i in range(4):
+            g = f.create_group(f"traj_{i}")
+            obs = g.create_group("obs")
+            obs.create_dataset(
+                "rgb_cam",
+                data=rng.integers(0, 256, (21, IMG_SIZE, IMG_SIZE, 3), dtype=np.uint8),
+            )
+            obs.create_dataset(
+                "state", data=rng.standard_normal((21, OBS_DIM)).astype(np.float32)
+            )
+            g.create_dataset(
+                "actions", data=(rng.random((20, ACTION_DIM)).astype(np.float32) * 2 - 1)
+            )
+            g.create_dataset("rewards", data=np.zeros(20, dtype=np.float32))
+            dones = np.zeros(20, dtype=np.float32)
+            dones[-1] = 1.0
+            g.create_dataset("dones", data=dones)
+
+    bc_env = OfflineEnvSpec(
+        gym_spaces.Dict(
+            {
+                "rgb_cam": gym_spaces.Box(low=0, high=255, shape=(IMG_SIZE, IMG_SIZE, 3), dtype=np.uint8),
+                "state": gym_spaces.Box(-np.inf, np.inf, (OBS_DIM,), np.float32),
+            }
+        ),
+        gym_spaces.Box(-1.0, 1.0, (ACTION_DIM,), np.float32),
+    )
+    bc_agent = DiffusionBC(
+        env=bc_env,
+        dataset_path=str(path),
+        horizon_steps=2,
+        cond_steps=1,
+        denoising_steps=5,
+        mlp_dims=[16, 16, 16],
+        batch_size=8,
+        device="cpu",
+        encoder_config=_test_encoder_config,
+    )
+    bc_agent.train(5)
+    bc_ckpt = bc_agent.save(tmp_path / "bc_dict_ckpt.pt")
+
+    env = _make_env(num_envs=2, act_steps=2)
+    with pytest.raises(ValueError, match=r"(image_keys|Dict)"):
+        DPPO(
+            env=env,
+            bc_checkpoint=str(bc_ckpt),
+            num_steps=2,
+            horizon_steps=2,
+            act_steps=2,
+            denoising_steps=5,
+            ft_denoising_steps=2,
+            actor_mlp_dims=[16, 16, 16],
+            critic_mlp_dims=[16, 16, 16],
+            device="cpu",
+        )
+
+
+def test_dppo_asymmetric_obs_groups_critic_sees_extra_state_actor_does_not():
+    """End-to-end asymmetric actor/critic encoders via state_<name>: critic
+    sees state_object_pose, actor does not, encoder_sharing="separate".
+    Asserts the actor extractor's schema lacks the key and, over a direct
+    probe of the actor path (policy._cond) and critic path
+    (policy.predict_values), gradients reach only the matching extractor in
+    BOTH directions -- DPPO's critic_extractor is genuinely separate here, so
+    DPPO's actor-stop-gradient hook (see its own documented formula,
+    mirroring BasePolicy.extract_actor_features) resolves to False and
+    _cond does not detach, giving total isolation both ways unlike SAC's
+    image-branch-only caveat. Also runs one real learn()+train() step
+    end-to-end."""
+    from rl_garden.observations import ObsGroups
+
+    torch.manual_seed(0)
+    env = _make_asymmetric_vision_env(num_envs=4, act_steps=2)
+    agent = DPPO(
+        env=env,
+        num_steps=3,
+        horizon_steps=2,
+        act_steps=2,
+        denoising_steps=5,
+        ft_denoising_steps=3,
+        actor_mlp_dims=[16, 16, 16],
+        critic_mlp_dims=[16, 16, 16],
+        update_epochs=1,
+        update_batch_size=8,
+        eval_freq=0,
+        device="cpu",
+        encoder_config=_test_encoder_config,
+        obs_groups=ObsGroups(
+            actor=("rgb_cam", "state"), critic=("rgb_cam", "state", "state_object_pose")
+        ),
+        encoder_sharing="separate",
+    )
+
+    actor_extractor = agent.policy.actor_extractor
+    critic_extractor = agent.policy.critic_extractor
+    assert critic_extractor is not None and critic_extractor is not actor_extractor
+    assert "state_object_pose" not in actor_extractor.state_keys
+    assert "state_object_pose" in critic_extractor.state_keys
+
+    obs, _ = env.reset(seed=0)
+    obs_t = agent._obs_to_policy_device(obs)
+
+    actor_features = agent.policy._cond(obs_t)["state"].squeeze(1)
+    actor_grad_on_actor = torch.autograd.grad(
+        actor_features.sum(),
+        list(actor_extractor.parameters()),
+        retain_graph=True,
+        allow_unused=True,
+    )
+    assert any(g is not None and torch.any(g != 0) for g in actor_grad_on_actor)
+    actor_grad_on_critic = torch.autograd.grad(
+        actor_features.sum(), list(critic_extractor.parameters()), allow_unused=True
+    )
+    assert all(g is None for g in actor_grad_on_critic)
+
+    values = agent.policy.predict_values(obs_t)
+    critic_grad_on_critic = torch.autograd.grad(
+        values.sum(),
+        list(critic_extractor.parameters()),
+        retain_graph=True,
+        allow_unused=True,
+    )
+    assert any(g is not None and torch.any(g != 0) for g in critic_grad_on_critic)
+    critic_grad_on_actor = torch.autograd.grad(
+        values.sum(), list(actor_extractor.parameters()), allow_unused=True
+    )
+    assert all(g is None for g in critic_grad_on_actor)
+
+    # A real end-to-end rollout+update step also runs cleanly.
+    agent.learn(total_timesteps=3 * 4 * 2)
+    losses = agent.train()
+    for key, value in losses.items():
+        assert np.isfinite(value), (key, value)

@@ -3,11 +3,6 @@
 from dataclasses import dataclass
 from typing import Literal
 
-from rl_garden.common.cli_args import (
-    image_encoder_factory_from_args,
-    image_keys_from_env,
-    vit_sac_kwargs_from_args,
-)
 from rl_garden.common.env_args import EnvBackendArgs
 from rl_garden.training.off2on._args import (
     VisionWSRLTrainingArgs,
@@ -18,7 +13,8 @@ from rl_garden.training.off2on._registry import registry
 
 @dataclass
 class WSRLOff2OnArgs(VisionWSRLTrainingArgs, EnvBackendArgs):
-    """WSRL args; visual defaults. For state obs pass --obs_mode state."""
+    """WSRL args. State-only observations by default; pass
+    ``--obs.rgb <camera>`` for Dict/RGBD observations."""
 
     # net_arch defaults to [256, 256, 256] (both actor/critic) when unset --
     # these let a config pick an asymmetric depth (e.g. WSRL's own AntMaze
@@ -32,30 +28,29 @@ class WSRLOff2OnArgs(VisionWSRLTrainingArgs, EnvBackendArgs):
     # never the WSRL paper's own antmaze setting of 0.0.
     target_entropy: float | str = "auto"
     num_eval_episodes: int | None = None
+    policy_log_std_multiplier: float | None = None
+    policy_log_std_offset: float | None = None
     # Not exposed before this field existed -- always fell back to the WSRL
     # algorithm's own "always" default, which bootstraps through every
     # terminal (never stops on true done). Harmless for AntMaze/Adroit,
     # which had no true online termination to begin with, but Kitchen's new
     # success-termination (_KitchenTerminalWrapper) needs "truncated" so the
     # TD target actually stops bootstrapping at a solved episode.
-    bootstrap_at_done: Literal["always", "never", "truncated"] = "always"
+    bootstrap_at_done: Literal["always", "never", "truncated"] = "truncated"
 
 
 def build_wsrl(args: WSRLOff2OnArgs, env, eval_env, logger, checkpoint_dir):
     from rl_garden.algorithms import WSRL
+    from rl_garden.common.cli_args import resolve_critic_encoder_config, resolve_obs_groups_config
     from rl_garden.training.inspection import construct_agent
 
-    is_visual = args.obs_mode != "state"
-    image_kwargs: dict = {}
-    if is_visual:
-        factory = image_encoder_factory_from_args(args)
-        image_keys = image_keys_from_env(env, args)
-        image_kwargs = dict(
-            image_keys=image_keys,
-            image_encoder_factory=factory,
-            image_fusion_mode=args.image_fusion_mode,
-            **vit_sac_kwargs_from_args(args, image_keys),
-        )
+    image_kwargs: dict = {
+        "encoder_config": args.encoder if args.obs.is_visual else None,
+        "obs_groups": resolve_obs_groups_config(args),
+        "critic_encoder_config": resolve_critic_encoder_config(args),
+    }
+    if args.encoder_sharing is not None:
+        image_kwargs["encoder_sharing"] = args.encoder_sharing
 
     net_arch = {
         "pi": [args.hidden_dim] * args.actor_hidden_layers,
@@ -121,6 +116,8 @@ def build_wsrl(args: WSRLOff2OnArgs, env, eval_env, logger, checkpoint_dir):
         std_parameterization=args.std_parameterization,
         net_arch=net_arch,
         target_entropy=args.target_entropy,
+        policy_log_std_multiplier=args.policy_log_std_multiplier,
+        policy_log_std_offset=args.policy_log_std_offset,
         bootstrap_at_done=args.bootstrap_at_done,
         online_cql_alpha=args.online_cql_alpha,
         online_use_cql_loss=args.online_use_cql_loss,
@@ -129,6 +126,9 @@ def build_wsrl(args: WSRLOff2OnArgs, env, eval_env, logger, checkpoint_dir):
         sparse_reward_mc=args.sparse_reward_mc,
         sparse_negative_reward=args.sparse_negative_reward,
         success_threshold=args.success_threshold,
+        use_sarsa_reference=args.use_sarsa_reference,
+        sarsa_hidden_dims=args.sarsa_hidden_dims,
+        sarsa_lr=args.sarsa_lr,
         seed=args.seed,
         logger=logger,
         std_log=args.std_log,
@@ -153,4 +153,11 @@ def run_wsrl(args: WSRLOff2OnArgs) -> None:
     run_off2on(args, build_agent=build_wsrl, algorithm="wsrl")
 
 
-registry.register("wsrl", WSRLOff2OnArgs, run_wsrl)
+
+
+def _wsrl_algorithm_cls() -> type:
+    from rl_garden.algorithms import WSRL
+
+    return WSRL
+
+registry.register("wsrl", WSRLOff2OnArgs, run_wsrl, algorithm_cls=_wsrl_algorithm_cls)

@@ -10,28 +10,23 @@ inputs share the same policy path.
 
 from __future__ import annotations
 
+import dataclasses
 import warnings
 from typing import Any, Literal, Optional, Sequence
 
 import torch
 import torch.nn.functional as F
-from gymnasium import spaces
 
+from rl_garden.algorithms._observation import EncoderSharing
 from rl_garden.algorithms.off2on import Off2OnReplayMixin
 from rl_garden.algorithms.off_policy import OffPolicyAlgorithm
 from rl_garden.algorithms.offline import OfflineEnvSpec, OfflineRLAlgorithm
-from rl_garden.buffers.dict_buffer import DictReplayBuffer
-from rl_garden.buffers.tensor_buffer import TensorReplayBuffer
+from rl_garden.buffers.replay_buffer import ReplayBuffer
 from rl_garden.common.logger import Logger
 from rl_garden.common.optim import ScheduleType, make_lr_scheduler, make_optimizer
 from rl_garden.common.training_phase import InitialTrainingPhase
-from rl_garden.encoders.base import BaseFeaturesExtractor
-from rl_garden.encoders.combined import (
-    CombinedExtractor,
-    ImageEncoderFactory,
-    default_image_encoder_factory,
-)
-from rl_garden.encoders.flatten import FlattenExtractor
+from rl_garden.encoders.config import EncoderConfig
+from rl_garden.observations import ObsGroups
 from rl_garden.policies.iql_policy import IQLPolicy
 
 
@@ -39,7 +34,12 @@ class IQLCore:
     """Shared IQL loss/network logic: expectile V-regression + AWR actor."""
 
     _SUPPORTED_POLICY_KWARGS = frozenset(
-        {"features_extractor_class", "features_extractor_kwargs"}
+        {
+            "actor_extractor_class",
+            "actor_extractor_kwargs",
+            "critic_extractor_class",
+            "critic_extractor_kwargs",
+        }
     )
 
     def _init_iql_params(
@@ -180,18 +180,20 @@ class IQLCore:
             "net_arch": self.net_arch,
             "n_critics": self.n_critics,
             "critic_subsample_size": self.critic_subsample_size,
+            "encoder_sharing": self.encoder_sharing,
+            "encoder_sharing_origin": self.encoder_sharing_origin,
+            "encoder_config": (
+                dataclasses.asdict(self.encoder_config) if self.encoder_config is not None else None
+            ),
+            "obs_groups": (
+                dataclasses.asdict(self.obs_groups) if self.obs_groups is not None else None
+            ),
+            "critic_encoder_config": (
+                dataclasses.asdict(self.critic_encoder_config)
+                if self.critic_encoder_config is not None
+                else None
+            ),
         }
-        if self._is_dict_obs:
-            meta.update(
-                {
-                    "image_keys": self._image_keys,
-                    "state_key": self._state_key,
-                    "use_proprio": self._use_proprio,
-                    "proprio_latent_dim": self._proprio_latent_dim,
-                    "image_fusion_mode": self._image_fusion_mode,
-                    "enable_stacking": self._enable_stacking,
-                }
-            )
         return meta
 
     def _extra_checkpoint_state(self) -> dict[str, Any]:
@@ -269,104 +271,25 @@ class IQLCore:
 
         return [256, 256]
 
-    def _default_features_extractor_class(self) -> type[BaseFeaturesExtractor]:
-        obs_space = self.env.single_observation_space
-        if isinstance(obs_space, spaces.Box):
-            return FlattenExtractor
-        if isinstance(obs_space, spaces.Dict):
-            return CombinedExtractor
-        raise TypeError(
-            "IQL supports Box or Dict observation spaces, got " + str(type(obs_space))
-        )
-
-    def _default_features_extractor_kwargs(self) -> dict[str, Any]:
-        if self._is_dict_obs:
-            return {
-                "image_keys": self._image_keys,
-                "state_key": self._state_key,
-                "image_encoder_factory": self._image_encoder_factory,
-                "proprio_latent_dim": self._proprio_latent_dim,
-                "use_proprio": self._use_proprio,
-                "fusion_mode": self._image_fusion_mode,
-                "enable_stacking": self._enable_stacking,
-            }
-        return {}
-
     def _normalize_policy_kwargs(
         self, policy_kwargs: Optional[dict[str, Any]]
     ) -> dict[str, Any]:
         normalized = dict(policy_kwargs or {})
-        unknown_keys = sorted(set(normalized) - self._SUPPORTED_POLICY_KWARGS)
-        if unknown_keys:
+        unsupported = sorted(set(normalized) - self._SUPPORTED_POLICY_KWARGS)
+        if unsupported:
             raise ValueError(
                 "Unsupported policy_kwargs keys: "
-                + ", ".join(unknown_keys)
-                + ". Supported keys are: features_extractor_class, "
-                + "features_extractor_kwargs."
+                + ", ".join(unsupported)
+                + ". Supported keys are: "
+                + ", ".join(sorted(self._SUPPORTED_POLICY_KWARGS))
+                + "."
             )
-        features_extractor_kwargs = normalized.get("features_extractor_kwargs", {})
-        if features_extractor_kwargs is None:
-            features_extractor_kwargs = {}
-        if not isinstance(features_extractor_kwargs, dict):
-            raise TypeError(
-                "policy_kwargs['features_extractor_kwargs'] must be a dict."
-            )
-        normalized["features_extractor_kwargs"] = dict(features_extractor_kwargs)
         return normalized
 
-    def _resolve_policy_kwargs(self) -> dict[str, Any]:
-        default_class = self._default_features_extractor_class()
-        default_kwargs = dict(self._default_features_extractor_kwargs())
-        resolved = {
-            "features_extractor_class": default_class,
-            "features_extractor_kwargs": default_kwargs,
-        }
-        if "features_extractor_class" in self.policy_kwargs:
-            resolved["features_extractor_class"] = self.policy_kwargs[
-                "features_extractor_class"
-            ]
-            if resolved["features_extractor_class"] is not default_class:
-                resolved["features_extractor_kwargs"] = {}
-        if "features_extractor_kwargs" in self.policy_kwargs:
-            if resolved["features_extractor_class"] is default_class:
-                resolved["features_extractor_kwargs"] = {
-                    **resolved["features_extractor_kwargs"],
-                    **self.policy_kwargs["features_extractor_kwargs"],
-                }
-            else:
-                resolved["features_extractor_kwargs"] = dict(
-                    self.policy_kwargs["features_extractor_kwargs"]
-                )
-        return resolved
-
-    def _build_features_extractor(self) -> BaseFeaturesExtractor:
-        resolved = self._resolve_policy_kwargs()
-        features_extractor_class = resolved["features_extractor_class"]
-        if not isinstance(features_extractor_class, type) or not issubclass(
-            features_extractor_class, BaseFeaturesExtractor
-        ):
-            raise TypeError(
-                "policy_kwargs['features_extractor_class'] must be a "
-                "BaseFeaturesExtractor subclass."
-            )
-        return features_extractor_class(
-            observation_space=self.env.single_observation_space,
-            **resolved["features_extractor_kwargs"],
-        )
-
     def _build_replay_buffer(self):
-        obs_space = self.env.single_observation_space
-        if isinstance(obs_space, spaces.Dict):
-            return DictReplayBuffer(
-                observation_space=obs_space,
-                action_space=self.env.single_action_space,
-                num_envs=self.num_envs,
-                buffer_size=self.buffer_size,
-                storage_device=self.buffer_device,
-                sample_device=self.device,
-            )
-        return TensorReplayBuffer(
-            observation_space=obs_space,
+        # obs_space is always Dict (boundary normalization is unconditional).
+        return ReplayBuffer(
+            observation_space=self.env.single_observation_space,
             action_space=self.env.single_action_space,
             num_envs=self.num_envs,
             buffer_size=self.buffer_size,
@@ -375,11 +298,9 @@ class IQLCore:
         )
 
     def _setup_model(self) -> None:
-        features_extractor = self._build_features_extractor()
         self.policy = IQLPolicy(
             observation_space=self.env.single_observation_space,
             action_space=self.env.single_action_space,
-            features_extractor=features_extractor,
             net_arch=self.net_arch,
             n_critics=self.n_critics,
             critic_subsample_size=self.critic_subsample_size,
@@ -397,6 +318,7 @@ class IQLCore:
             backbone_type=self.backbone_type,
             std_parameterization=self.std_parameterization,
             actor_distribution=self.actor_distribution,
+            **self._policy_extractor_kwargs(self.env.single_observation_space),
         ).to(self.device)
 
         self.critic_value_optimizer = make_optimizer(
@@ -473,7 +395,9 @@ class IQLCore:
         )
 
     def _compute_losses(self, data) -> tuple[torch.Tensor, dict[str, float]]:
-        features = self.policy.extract_features(data.obs, stop_gradient=False)
+        # V and Q are critic-role heads (both trained here): critic-role
+        # extraction, never detached.
+        features = self.policy.extract_critic_features(data.obs)
 
         with torch.no_grad():
             target_q_for_value = self._target_min_q(features.detach(), data.actions)
@@ -482,9 +406,7 @@ class IQLCore:
 
         q_pred = self.policy.q_values_all(features, data.actions, target=False)
         with torch.no_grad():
-            next_features = self.policy.extract_features(
-                data.next_obs, stop_gradient=False
-            )
+            next_features = self.policy.extract_critic_features(data.next_obs)
             next_v = self.policy.value(next_features)
             target_q = (
                 data.rewards.unsqueeze(-1)
@@ -495,8 +417,12 @@ class IQLCore:
         with torch.no_grad():
             adv = target_q_for_value - values
             exp_adv = torch.exp(adv * self.temperature).clamp(max=self.adv_clip_max)
+        # AWR actor loss: actor-role read, no explicit stop_gradient -- applies
+        # extract_actor_features's encoder_sharing rule (identical to the old
+        # hardcoded stop_gradient=True under the only previously-reachable
+        # "shared_critic_grad" sharing).
         log_prob, deterministic_action = self.policy.behavior_log_prob(
-            data.obs, data.actions, stop_gradient=True
+            data.obs, data.actions
         )
         actor_loss = -(exp_adv * log_prob).mean()
 
@@ -597,7 +523,7 @@ class _IQLRolloutTrainingShell(Off2OnReplayMixin, IQLCore, OffPolicyAlgorithm):
         tau: float = 0.005,
         training_freq: int = 64,
         utd: float = 1.0,
-        bootstrap_at_done: str = "always",
+        bootstrap_at_done: str = "truncated",
         offline_sampling: Literal["with_replace", "without_replace"] = "with_replace",
         actor_lr: float = 3e-4,
         critic_value_lr: float = 3e-4,
@@ -622,14 +548,10 @@ class _IQLRolloutTrainingShell(Off2OnReplayMixin, IQLCore, OffPolicyAlgorithm):
         value_hidden_dims: Optional[Sequence[int]] = None,
         n_critics: int = 2,
         critic_subsample_size: Optional[int] = None,
-        image_encoder_factory: Optional[ImageEncoderFactory] = None,
-        image_keys: Optional[tuple[str, ...]] = None,
-        state_key: Optional[str] = None,
-        use_proprio: Optional[bool] = None,
-        proprio_latent_dim: Optional[int] = None,
-        image_fusion_mode: Optional[str] = None,
-        enable_stacking: Optional[bool] = None,
-        detach_encoder_on_actor: bool = True,
+        encoder_config: Optional[EncoderConfig] = None,
+        obs_groups: Optional[ObsGroups] = None,
+        critic_encoder_config: Optional[EncoderConfig] = None,
+        encoder_sharing: Optional[EncoderSharing] = None,
         policy_kwargs: Optional[dict[str, Any]] = None,
         actor_use_layer_norm: bool = False,
         critic_use_layer_norm: bool = False,
@@ -659,17 +581,6 @@ class _IQLRolloutTrainingShell(Off2OnReplayMixin, IQLCore, OffPolicyAlgorithm):
         save_final_checkpoint: bool = True,
         initial_training_phase: Optional[InitialTrainingPhase] = None,
     ) -> None:
-        self._configure_observation_kwargs(
-            env,
-            image_encoder_factory=image_encoder_factory,
-            image_keys=image_keys,
-            state_key=state_key,
-            use_proprio=use_proprio,
-            proprio_latent_dim=proprio_latent_dim,
-            image_fusion_mode=image_fusion_mode,
-            enable_stacking=enable_stacking,
-            detach_encoder_on_actor=detach_encoder_on_actor,
-        )
         super().__init__(
             env=env,
             eval_env=eval_env,
@@ -695,6 +606,10 @@ class _IQLRolloutTrainingShell(Off2OnReplayMixin, IQLCore, OffPolicyAlgorithm):
             save_final_checkpoint=save_final_checkpoint,
             initial_training_phase=initial_training_phase,
         )
+        self.encoder_config = encoder_config
+        self.obs_groups = obs_groups
+        self.critic_encoder_config = critic_encoder_config
+        self.encoder_sharing = encoder_sharing
         self._init_iql_params(
             tau=tau,
             utd=utd,
@@ -779,13 +694,10 @@ class IQL(IQLCore, OfflineRLAlgorithm):
         value_hidden_dims: Optional[Sequence[int]] = None,
         n_critics: int = 2,
         critic_subsample_size: Optional[int] = None,
-        image_encoder_factory: Optional[ImageEncoderFactory] = None,
-        image_keys: Optional[tuple[str, ...]] = None,
-        state_key: Optional[str] = None,
-        use_proprio: Optional[bool] = None,
-        proprio_latent_dim: Optional[int] = None,
-        image_fusion_mode: Optional[str] = None,
-        enable_stacking: Optional[bool] = None,
+        encoder_config: Optional[EncoderConfig] = None,
+        obs_groups: Optional[ObsGroups] = None,
+        critic_encoder_config: Optional[EncoderConfig] = None,
+        encoder_sharing: Optional[EncoderSharing] = None,
         policy_kwargs: Optional[dict[str, Any]] = None,
         actor_use_layer_norm: bool = False,
         critic_use_layer_norm: bool = False,
@@ -875,48 +787,10 @@ class IQL(IQLCore, OfflineRLAlgorithm):
             backbone_type=backbone_type,
             std_parameterization=std_parameterization,
         )
-
-        obs_space = self.env.single_observation_space
-        image_kwargs_explicit = {
-            "image_encoder_factory": image_encoder_factory,
-            "image_keys": image_keys,
-            "state_key": state_key,
-            "use_proprio": use_proprio,
-            "proprio_latent_dim": proprio_latent_dim,
-            "image_fusion_mode": image_fusion_mode,
-            "enable_stacking": enable_stacking,
-        }
-        explicitly_set = [k for k, v in image_kwargs_explicit.items() if v is not None]
-        if isinstance(obs_space, spaces.Box):
-            if explicitly_set:
-                raise ValueError(
-                    "IQL with Box observation space does not accept image-related "
-                    f"kwargs (got {explicitly_set}). Use Dict observations instead."
-                )
-            self._is_dict_obs = False
-        elif isinstance(obs_space, spaces.Dict):
-            self._is_dict_obs = True
-            self._image_encoder_factory = (
-                image_encoder_factory or default_image_encoder_factory()
-            )
-            self._image_keys = (
-                image_keys if image_keys is not None else ("rgb", "depth")
-            )
-            self._state_key = state_key if state_key is not None else "state"
-            self._use_proprio = use_proprio if use_proprio is not None else True
-            self._proprio_latent_dim = (
-                proprio_latent_dim if proprio_latent_dim is not None else 64
-            )
-            self._image_fusion_mode = (
-                image_fusion_mode if image_fusion_mode is not None else "stack_channels"
-            )
-            self._enable_stacking = (
-                enable_stacking if enable_stacking is not None else False
-            )
-        else:
-            raise TypeError(
-                f"IQL supports Box or Dict observation spaces, got {type(obs_space)}"
-            )
+        self.encoder_config = encoder_config
+        self.obs_groups = obs_groups
+        self.critic_encoder_config = critic_encoder_config
+        self.encoder_sharing = encoder_sharing
 
         self.policy_kwargs = self._normalize_policy_kwargs(policy_kwargs)
         self._setup_model()

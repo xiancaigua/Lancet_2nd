@@ -35,12 +35,7 @@ class IQLArgs(
 def _iql_kwargs(
     args: Any, env_spec: OfflineEnvSpec, logger: Logger, eval_env: Any = None
 ) -> dict:
-    from gymnasium import spaces
-
-    from rl_garden.common.cli_args import image_encoder_factory_from_args
-    from rl_garden.encoders import discover_image_keys
-
-    obs_space = env_spec.single_observation_space
+    from rl_garden.common.cli_args import resolve_critic_encoder_config, resolve_obs_groups_config
     kwargs = {
         "env": env_spec,
         "buffer_size": args.buffer_size,
@@ -94,17 +89,12 @@ def _iql_kwargs(
         "checkpoint_freq": 0,
         "save_replay_buffer": args.save_replay_buffer,
         "save_final_checkpoint": False,
+        "encoder_config": args.encoder if args.obs.is_visual else None,
+        "obs_groups": resolve_obs_groups_config(args),
+        "critic_encoder_config": resolve_critic_encoder_config(args),
     }
-    if isinstance(obs_space, spaces.Dict):
-        image_keys = discover_image_keys(obs_space)
-        kwargs.update(
-            image_encoder_factory=image_encoder_factory_from_args(args),
-            image_keys=image_keys,
-            state_key="state",
-            use_proprio=args.include_state,
-            image_fusion_mode=args.image_fusion_mode,
-            enable_stacking=False,
-        )
+    if args.encoder_sharing is not None:
+        kwargs["encoder_sharing"] = args.encoder_sharing
     return kwargs
 
 
@@ -121,4 +111,10 @@ def run_iql(args: IQLArgs) -> None:
     run_offline(args, build_agent=build_iql)
 
 
-registry.register("iql", IQLArgs, run_iql)
+def _iql_algorithm_cls() -> type:
+    from rl_garden.algorithms import IQL
+
+    return IQL
+
+
+registry.register("iql", IQLArgs, run_iql, algorithm_cls=_iql_algorithm_cls)

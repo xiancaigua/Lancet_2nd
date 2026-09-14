@@ -65,13 +65,16 @@ from rl_garden.algorithms._chunked_rollout import ChunkedRolloutMixin
 from rl_garden.algorithms.fql import FQLCore
 from rl_garden.algorithms.off2on import Off2OnReplayMixin
 from rl_garden.algorithms.off_policy import OffPolicyAlgorithm
-from rl_garden.buffers.chunked_replay_buffer import ChunkedTensorReplayBuffer
+from rl_garden.buffers.chunked_replay_buffer import ChunkedReplayBuffer
 from rl_garden.common.logger import Logger
 from rl_garden.common.optim import make_lr_scheduler, make_optimizer
 from rl_garden.common.training_phase import InitialTrainingPhase
 from rl_garden.common.utils import polyak_update
+from rl_garden.encoders.config import EncoderConfig
+from rl_garden.encoders.factory import build_observation_encoder
 from rl_garden.networks import Activation, KernelInit
 from rl_garden.networks.actor_critic import BackboneType
+from rl_garden.observations import ObsGroups, resolve_obs_groups
 from rl_garden.policies.acfql_policy import ACFQLPolicy, ActorType, EncoderSharing
 
 
@@ -88,18 +91,16 @@ class ACFQLCore(FQLCore):
         self.actor_num_samples = actor_num_samples
 
     def _policy_action_space(self) -> spaces.Box:
-        raw = self.env.single_action_space
-        assert isinstance(raw, spaces.Box), "ACFQL requires a flat Box action space."
-        low = np.tile(np.asarray(raw.low, dtype=np.float32).reshape(-1), self.horizon_length)
-        high = np.tile(np.asarray(raw.high, dtype=np.float32).reshape(-1), self.horizon_length)
+        action_space = self.env.single_action_space
+        assert isinstance(action_space, spaces.Box), "ACFQL requires a flat Box action space."
+        low = np.tile(np.asarray(action_space.low, dtype=np.float32).reshape(-1), self.horizon_length)
+        high = np.tile(np.asarray(action_space.high, dtype=np.float32).reshape(-1), self.horizon_length)
         return spaces.Box(low=low, high=high, dtype=np.float32)
 
-    def _build_replay_buffer(self) -> ChunkedTensorReplayBuffer:
-        obs_space = self.env.single_observation_space
-        if not isinstance(obs_space, spaces.Box):
-            raise TypeError("ACFQL is state-only (Box observations); vision is out of scope.")
-        return ChunkedTensorReplayBuffer(
-            observation_space=obs_space,
+    def _build_replay_buffer(self):
+        # obs_space is always Dict (boundary normalization is unconditional).
+        return ChunkedReplayBuffer(
+            observation_space=self.env.single_observation_space,
             action_space=self.env.single_action_space,
             num_envs=self.num_envs,
             buffer_size=self.buffer_size,
@@ -110,17 +111,20 @@ class ACFQLCore(FQLCore):
         )
 
     def _setup_model(self) -> None:
-        features_extractor = self._build_features_extractor()
+        observation_space = self.env.single_observation_space
+        extractor_kwargs = self._policy_extractor_kwargs(observation_space)
         if self.encoder_sharing == "separate":
-            actor_bc_flow_encoder = self._build_features_extractor()
-            actor_onestep_flow_encoder = self._build_features_extractor()
+            actor_keys = resolve_obs_groups(
+                self.observation_encoders.schema, self.obs_groups
+            )["actor"].keys
+            actor_bc_flow_encoder = build_observation_encoder(
+                observation_space, self.encoder_config, keys=actor_keys
+            )
         else:
             actor_bc_flow_encoder = None
-            actor_onestep_flow_encoder = None
         self.policy = ACFQLPolicy(
             observation_space=self.env.single_observation_space,
             action_space=self._policy_action_space(),
-            features_extractor=features_extractor,
             net_arch=self.net_arch,
             n_critics=self.n_critics,
             actor_use_layer_norm=self.actor_use_layer_norm,
@@ -132,13 +136,12 @@ class ACFQLCore(FQLCore):
             kernel_init=self.kernel_init,
             backbone_type=self.backbone_type,
             activation_fn=self.activation_fn,
-            encoder_sharing=self.encoder_sharing,
             actor_bc_flow_encoder=actor_bc_flow_encoder,
-            actor_onestep_flow_encoder=actor_onestep_flow_encoder,
             actor_type=self.actor_type,
             actor_num_samples=self.actor_num_samples,
             flow_steps=self.flow_steps,
             q_agg=self.q_agg,
+            **extractor_kwargs,
         ).to(self.device)
 
         self.critic_optimizer = make_optimizer(
@@ -187,11 +190,11 @@ class ACFQLCore(FQLCore):
             full_action_dim = flat_actions.shape[-1]
             action_dim = full_action_dim // self.horizon_length
 
-            obs_features = self.policy.extract_features(data.obs)
+            obs_features = self.policy.extract_critic_features(data.obs)
 
             # --- critic ---
             with torch.no_grad():
-                next_features_critic = self.policy.extract_features(data.next_obs)
+                next_features_critic = self.policy.extract_critic_features(data.next_obs)
                 next_action = self.policy.predict(data.next_obs, deterministic=False)
                 target_q_all = self.policy.q_values_all(
                     next_features_critic, next_action, target=True
@@ -302,7 +305,7 @@ class _ACFQLRolloutTrainingShell(Off2OnReplayMixin, ACFQLCore, OffPolicyAlgorith
         gamma: float = 0.99,
         training_freq: int = 64,
         utd: float = 1.0,
-        bootstrap_at_done: str = "always",
+        bootstrap_at_done: str = "truncated",
         online_episodes_per_iteration: Optional[int] = None,
         stats_window_size: Optional[int] = None,
         tau: float = 0.005,
@@ -330,7 +333,10 @@ class _ACFQLRolloutTrainingShell(Off2OnReplayMixin, ACFQLCore, OffPolicyAlgorith
         kernel_init: Optional[KernelInit] = "xavier_uniform",
         backbone_type: BackboneType = "mlp",
         activation_fn: Optional[Activation] = "gelu",
-        encoder_sharing: EncoderSharing = "shared",
+        encoder_sharing: Optional[EncoderSharing] = None,
+        encoder_config: Optional[EncoderConfig] = None,
+        obs_groups: Optional[ObsGroups] = None,
+        critic_encoder_config: Optional[EncoderConfig] = None,
         offline_sampling: Literal["with_replace", "without_replace"] = "with_replace",
         seed: int = 1,
         device: str | torch.device = "auto",
@@ -345,7 +351,6 @@ class _ACFQLRolloutTrainingShell(Off2OnReplayMixin, ACFQLCore, OffPolicyAlgorith
         save_final_checkpoint: bool = True,
         initial_training_phase: Optional[InitialTrainingPhase] = None,
     ) -> None:
-        self._configure_observation_kwargs(env)
         super().__init__(
             env=env,
             eval_env=eval_env,
@@ -405,6 +410,9 @@ class _ACFQLRolloutTrainingShell(Off2OnReplayMixin, ACFQLCore, OffPolicyAlgorith
             backbone_type=backbone_type,
             activation_fn=activation_fn,
             encoder_sharing=encoder_sharing,
+            encoder_config=encoder_config,
+            obs_groups=obs_groups,
+            critic_encoder_config=critic_encoder_config,
         )
         self._init_off2on_params(offline_sampling=offline_sampling)
         self._setup_model()

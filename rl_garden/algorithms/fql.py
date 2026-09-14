@@ -40,36 +40,37 @@ rl-garden algorithm's ``None`` -> ReLU): the reference's MLP hardcodes
 ``nn.gelu`` unconditionally (``3rd_party/fql/utils/networks.py``).
 
 ``encoder_sharing`` (vision/Dict obs only -- Box obs uses a parameterless
-``FlattenExtractor`` either way): ``"shared"`` (default) follows AGENTS.md's
-project convention and every other vision-capable algorithm (``SACPolicy``),
-one encoder trained by critic loss, actor path detached. ``"separate"``
-matches FQL's own JAX reference exactly (three independent encoder
-instances). See ``FQLPolicy``'s docstring for the full gradient-isolation
-argument per mode.
+``FlattenExtractor`` either way): ``"shared_critic_grad"`` (default) follows
+AGENTS.md's project convention and every other vision-capable algorithm
+(``SACPolicy``), one encoder trained by critic loss, actor path detached.
+``"separate"`` matches FQL's own JAX reference exactly (three independent
+encoder instances). See ``FQLPolicy``'s docstring for the full
+gradient-isolation argument per mode.
+
+``_critic_loss`` averages (not sums) the per-critic MSE across the ensemble,
+matching the reference's ``mean((q - target_q)**2)`` over the full
+``(n_critics, batch)`` array -- summing would scale the critic gradient by
+``n_critics`` relative to the reference.
 """
 from __future__ import annotations
 
+import dataclasses
 from typing import Any, Literal, Optional, Sequence
 
 import torch
 import torch.nn.functional as F
-from gymnasium import spaces
 
 from rl_garden.algorithms.offline import OfflineEnvSpec, OfflineRLAlgorithm
-from rl_garden.buffers.dict_buffer import DictReplayBuffer
-from rl_garden.buffers.tensor_buffer import TensorReplayBuffer
+from rl_garden.buffers.replay_buffer import ReplayBuffer
 from rl_garden.common.logger import Logger
 from rl_garden.common.optim import ScheduleType, make_lr_scheduler, make_optimizer
 from rl_garden.common.utils import polyak_update
-from rl_garden.encoders.base import BaseFeaturesExtractor
-from rl_garden.encoders.combined import (
-    CombinedExtractor,
-    ImageEncoderFactory,
-    default_image_encoder_factory,
-)
-from rl_garden.encoders.flatten import FlattenExtractor
+from rl_garden.encoders.config import EncoderConfig
+from rl_garden.encoders.factory import build_observation_encoder
 from rl_garden.networks import Activation, KernelInit
 from rl_garden.networks.actor_critic import BackboneType
+from rl_garden.networks.actor_vector_field import flow_onestep_distill_loss
+from rl_garden.observations import ObsGroups, resolve_obs_groups
 from rl_garden.policies.fql_policy import EncoderSharing, FQLPolicy
 
 
@@ -77,8 +78,16 @@ class FQLCore:
     """Shared FQL loss/network logic."""
 
     _SUPPORTED_POLICY_KWARGS = frozenset(
-        {"features_extractor_class", "features_extractor_kwargs"}
+        {"actor_extractor_class", "actor_extractor_kwargs"}
     )
+
+    # The FQL family has no "shared" mode (both actor and critic losses
+    # training one encoder with no stop-gradient): only "shared_critic_grad"
+    # (one encoder, actor path detached -- the default) or "separate" (three
+    # independent encoder instances, matching the JAX reference) make sense.
+    # Checked by ObservationEncoderMixin._resolve_encoder_sharing against the
+    # resolved value, and read statically by algorithm_registry's preflight.
+    encoder_sharing_choices: tuple = ("shared_critic_grad", "separate")
 
     def _init_fql_params(
         self,
@@ -108,8 +117,10 @@ class FQLCore:
         kernel_init: Optional[KernelInit] = "xavier_uniform",
         backbone_type: BackboneType = "mlp",
         activation_fn: Optional[Activation] = "gelu",
-        encoder_sharing: EncoderSharing = "shared",
-        image_encoder_factory: Optional[ImageEncoderFactory] = None,
+        encoder_sharing: Optional[EncoderSharing] = None,
+        encoder_config: Optional[EncoderConfig] = None,
+        obs_groups: Optional[ObsGroups] = None,
+        critic_encoder_config: Optional[EncoderConfig] = None,
     ) -> None:
         if not (0.0 < tau <= 1.0):
             raise ValueError(f"tau must be in (0, 1], got {tau}.")
@@ -120,10 +131,6 @@ class FQLCore:
         if grad_clip_norm is not None and grad_clip_norm <= 0:
             raise ValueError(
                 f"grad_clip_norm must be positive or None, got {grad_clip_norm}."
-            )
-        if encoder_sharing not in ("shared", "separate"):
-            raise ValueError(
-                f"encoder_sharing must be 'shared' or 'separate', got {encoder_sharing!r}."
             )
 
         self.tau = tau
@@ -154,7 +161,9 @@ class FQLCore:
         self.backbone_type = backbone_type
         self.activation_fn = activation_fn
         self.encoder_sharing = encoder_sharing
-        self.image_encoder_factory = image_encoder_factory
+        self.encoder_config = encoder_config
+        self.obs_groups = obs_groups
+        self.critic_encoder_config = critic_encoder_config
 
     def _optimizer_names(self) -> tuple[str, ...]:
         return ("critic_optimizer", "actor_optimizer")
@@ -180,6 +189,18 @@ class FQLCore:
             "n_critics": self.n_critics,
             "activation_fn": self.activation_fn,
             "encoder_sharing": self.encoder_sharing,
+            "encoder_sharing_origin": self.encoder_sharing_origin,
+            "encoder_config": (
+                dataclasses.asdict(self.encoder_config) if self.encoder_config is not None else None
+            ),
+            "obs_groups": (
+                dataclasses.asdict(self.obs_groups) if self.obs_groups is not None else None
+            ),
+            "critic_encoder_config": (
+                dataclasses.asdict(self.critic_encoder_config)
+                if self.critic_encoder_config is not None
+                else None
+            ),
         }
 
     def _extra_checkpoint_state(self) -> dict[str, Any]:
@@ -197,50 +218,10 @@ class FQLCore:
             if sched is not None and sched_state is not None:
                 sched.load_state_dict(sched_state)
 
-    def _default_features_extractor_class(self) -> type[BaseFeaturesExtractor]:
-        obs_space = self.env.single_observation_space
-        if isinstance(obs_space, spaces.Box):
-            return FlattenExtractor
-        if isinstance(obs_space, spaces.Dict):
-            return CombinedExtractor
-        raise TypeError(
-            "FQL only supports Box or Dict observation spaces, got " + str(type(obs_space))
-        )
-
-    def _default_features_extractor_kwargs(self) -> dict[str, Any]:
-        obs_space = self.env.single_observation_space
-        if isinstance(obs_space, spaces.Dict):
-            return {
-                "image_encoder_factory": (
-                    self.image_encoder_factory or default_image_encoder_factory()
-                ),
-            }
-        return {}
-
-    def _build_features_extractor(self) -> BaseFeaturesExtractor:
-        cls = self._default_features_extractor_class()
-        return cls(
-            observation_space=self.env.single_observation_space,
-            **self._default_features_extractor_kwargs(),
-        )
-
     def _build_replay_buffer(self):
-        obs_space = self.env.single_observation_space
-        if isinstance(obs_space, spaces.Dict):
-            return DictReplayBuffer(
-                observation_space=obs_space,
-                action_space=self.env.single_action_space,
-                num_envs=self.num_envs,
-                buffer_size=self.buffer_size,
-                storage_device=self.buffer_device,
-                sample_device=self.device,
-            )
-        if not isinstance(obs_space, spaces.Box):
-            raise TypeError(
-                "FQL only supports Box or Dict observation spaces, got " + str(type(obs_space))
-            )
-        return TensorReplayBuffer(
-            observation_space=obs_space,
+        # obs_space is always Dict (boundary normalization is unconditional).
+        return ReplayBuffer(
+            observation_space=self.env.single_observation_space,
             action_space=self.env.single_action_space,
             num_envs=self.num_envs,
             buffer_size=self.buffer_size,
@@ -249,17 +230,25 @@ class FQLCore:
         )
 
     def _setup_model(self) -> None:
-        features_extractor = self._build_features_extractor()
+        observation_space = self.env.single_observation_space
+        # Mixin resolves the actor/critic pair (actor_onestep_flow's own
+        # encoder + critic's own encoder, or one shared encoder). FQL needs a
+        # third encoder for actor_bc_flow -- the plan's documented single
+        # exception to the actor_extractor/critic_extractor contract -- built
+        # directly over the same key subset as the actor role.
+        extractor_kwargs = self._policy_extractor_kwargs(observation_space)
         if self.encoder_sharing == "separate":
-            actor_bc_flow_encoder = self._build_features_extractor()
-            actor_onestep_flow_encoder = self._build_features_extractor()
+            actor_keys = resolve_obs_groups(
+                self.observation_encoders.schema, self.obs_groups
+            )["actor"].keys
+            actor_bc_flow_encoder = build_observation_encoder(
+                observation_space, self.encoder_config, keys=actor_keys
+            )
         else:
             actor_bc_flow_encoder = None
-            actor_onestep_flow_encoder = None
         self.policy = FQLPolicy(
             observation_space=self.env.single_observation_space,
             action_space=self.env.single_action_space,
-            features_extractor=features_extractor,
             net_arch=self.net_arch,
             n_critics=self.n_critics,
             actor_use_layer_norm=self.actor_use_layer_norm,
@@ -271,9 +260,8 @@ class FQLCore:
             kernel_init=self.kernel_init,
             backbone_type=self.backbone_type,
             activation_fn=self.activation_fn,
-            encoder_sharing=self.encoder_sharing,
             actor_bc_flow_encoder=actor_bc_flow_encoder,
-            actor_onestep_flow_encoder=actor_onestep_flow_encoder,
+            **extractor_kwargs,
         ).to(self.device)
 
         self.critic_optimizer = make_optimizer(
@@ -315,11 +303,13 @@ class FQLCore:
 
     @staticmethod
     def _critic_loss(q_all: torch.Tensor, target_q: torch.Tensor) -> torch.Tensor:
+        # Mean over the critic ensemble, matching the reference's single
+        # `mean((q - target_q)**2)` over the full (n_critics, batch) array --
+        # summing here instead would scale the critic gradient by n_critics.
         expanded_target = target_q.unsqueeze(0).expand_as(q_all)
-        return sum(
-            F.mse_loss(q_pred, q_target)
-            for q_pred, q_target in zip(q_all, expanded_target)
-        )
+        return torch.stack(
+            [F.mse_loss(q_pred, q_target) for q_pred, q_target in zip(q_all, expanded_target)]
+        ).mean()
 
     def _aggregate_target_q(self, q_all: torch.Tensor) -> torch.Tensor:
         if self.q_agg == "min":
@@ -331,7 +321,121 @@ class FQLCore:
             return
         torch.nn.utils.clip_grad_norm_(list(params), self.grad_clip_norm)
 
+    def _critic_update(self, data, obs_features: torch.Tensor) -> dict[str, float]:
+        with torch.no_grad():
+            next_features_critic = self.policy.extract_critic_features(data.next_obs)
+            if self.encoder_sharing == "separate":
+                next_features_actor = self.policy.extract_actor_onestep_features(
+                    data.next_obs
+                )
+            else:
+                next_features_actor = next_features_critic
+            next_noise = self.policy.sample_noise(
+                next_features_actor.shape[0],
+                device=next_features_actor.device,
+                dtype=next_features_actor.dtype,
+            )
+            next_action = self.policy.actor_onestep_flow(next_features_actor, next_noise)
+            next_action = next_action.clamp(
+                self.policy.action_low, self.policy.action_high
+            )
+            target_q_all = self.policy.q_values_all(
+                next_features_critic, next_action, target=True
+            )
+            next_q = self._aggregate_target_q(target_q_all)
+            target_q = data.rewards.unsqueeze(-1) + self.gamma * (
+                1.0 - data.dones.unsqueeze(-1)
+            ) * next_q
+
+        q_all = self.policy.q_values_all(obs_features, data.actions, target=False)
+        critic_loss = self._critic_loss(q_all, target_q)
+
+        self.critic_optimizer.zero_grad(set_to_none=True)
+        critic_loss.backward()
+        self._clip_grad_norm(self.policy.critic_and_encoder_parameters())
+        self.critic_optimizer.step()
+        if self._lr_schedulers[0] is not None:
+            self._lr_schedulers[0].step()
+
+        return {"critic_loss": float(critic_loss.detach().item())}
+
+    def _actor_update(self, data, obs_features: torch.Tensor) -> dict[str, float]:
+        # In "shared_critic_grad" mode bc/onestep/q features all alias one detached
+        # forward through the shared encoder (today's behavior). In
+        # "separate" mode each is a fresh, grad-enabled forward through
+        # that network's own encoder -- q_features in particular cannot
+        # reuse `obs_features` above: its graph was already consumed by
+        # critic_loss.backward(), so PyTorch would raise on a second
+        # backward through it. See FQLPolicy.extract_actor_loss_features.
+        bc_features, onestep_features, q_features = self.policy.extract_actor_loss_features(
+            data.obs, critic_features=obs_features
+        )
+        batch_size = data.actions.shape[0]
+        action_dim = data.actions.shape[-1]
+        device, dtype = bc_features.device, bc_features.dtype
+
+        x_0 = torch.randn(batch_size, action_dim, device=device, dtype=dtype)
+        t = torch.rand(batch_size, 1, device=device, dtype=dtype)
+        x_t = (1 - t) * x_0 + t * data.actions
+        vel_target = data.actions - x_0
+        pred_vel = self.policy.actor_bc_flow(bc_features, x_t, t)
+        bc_flow_loss = F.mse_loss(pred_vel, vel_target)
+
+        noises = torch.randn(batch_size, action_dim, device=device, dtype=dtype)
+        actor_actions = self.policy.actor_onestep_flow(onestep_features, noises)
+        distill_loss = flow_onestep_distill_loss(
+            self.policy.actor_bc_flow,
+            actor_actions,
+            bc_features,
+            noises,
+            self.flow_steps,
+            low=self.policy.action_low,
+            high=self.policy.action_high,
+        )
+
+        clipped_actions = actor_actions.clamp(
+            self.policy.action_low, self.policy.action_high
+        )
+        q_all_pi = self.policy.q_values_all(
+            q_features, clipped_actions, target=False
+        )
+        q_pi = q_all_pi.mean(dim=0)  # actor loss always averages the ensemble
+        q_loss = -q_pi.mean()
+        if self.normalize_q_loss:
+            lam = (1.0 / q_pi.abs().mean()).detach()
+            q_loss = lam * q_loss
+
+        actor_loss = bc_flow_loss + self.alpha * distill_loss + q_loss
+
+        self.actor_optimizer.zero_grad(set_to_none=True)
+        actor_loss.backward()
+        self._clip_grad_norm(self.policy.actor_parameters())
+        self.actor_optimizer.step()
+        if self._lr_schedulers[1] is not None:
+            self._lr_schedulers[1].step()
+
+        return {
+            "actor_loss": float(actor_loss.detach().item()),
+            "bc_flow_loss": float(bc_flow_loss.detach().item()),
+            "distill_loss": float(distill_loss.detach().item()),
+            "q_loss": float(q_loss.detach().item()),
+        }
+
+    def _update_targets(self) -> None:
+        polyak_update(
+            self.policy.critic.parameters(),
+            self.policy.critic_target.parameters(),
+            self.tau,
+        )
+
     def train(self, gradient_steps: int, compute_info: bool = False) -> dict[str, float]:
+        """Run ``gradient_steps`` FQL updates.
+
+        Per step: sample a batch, encode obs once (grad-enabled), then run
+        the three overridable seams in order -- ``_critic_update``,
+        ``_actor_update``, ``_update_targets`` -- and accumulate their
+        returned metrics.
+        """
         if gradient_steps <= 0:
             raise ValueError(f"gradient_steps must be positive, got {gradient_steps}.")
         metrics_sum: dict[str, float] = {}
@@ -342,110 +446,16 @@ class FQLCore:
             data = self._sample_train_batch(self.batch_size)
 
             # Critic's own encoding of obs -- grad-enabled, backprops into
-            # the encoder via critic_loss (the encoder IS self.features_extractor
-            # in both encoder_sharing modes; only the actor's encoder(s) differ).
-            obs_features = self.policy.extract_features(data.obs)
+            # the encoder via critic_loss (the encoder IS the policy's
+            # critic_extractor, or actor_extractor when shared; only the
+            # actor's encoder(s) differ).
+            obs_features = self.policy.extract_critic_features(data.obs)
 
-            # --- critic ---
-            with torch.no_grad():
-                next_features_critic = self.policy.extract_features(data.next_obs)
-                if self.encoder_sharing == "separate":
-                    next_features_actor = self.policy.extract_actor_onestep_features(
-                        data.next_obs
-                    )
-                else:
-                    next_features_actor = next_features_critic
-                next_noise = self.policy.sample_noise(
-                    next_features_actor.shape[0],
-                    device=next_features_actor.device,
-                    dtype=next_features_actor.dtype,
-                )
-                next_action = self.policy.actor_onestep_flow(next_features_actor, next_noise)
-                next_action = next_action.clamp(
-                    self.policy.action_low, self.policy.action_high
-                )
-                target_q_all = self.policy.q_values_all(
-                    next_features_critic, next_action, target=True
-                )
-                next_q = self._aggregate_target_q(target_q_all)
-                target_q = data.rewards.unsqueeze(-1) + self.gamma * (
-                    1.0 - data.dones.unsqueeze(-1)
-                ) * next_q
+            critic_metrics = self._critic_update(data, obs_features)
+            actor_metrics = self._actor_update(data, obs_features)
+            self._update_targets()
 
-            q_all = self.policy.q_values_all(obs_features, data.actions, target=False)
-            critic_loss = self._critic_loss(q_all, target_q)
-
-            self.critic_optimizer.zero_grad(set_to_none=True)
-            critic_loss.backward()
-            self._clip_grad_norm(self.policy.critic_and_encoder_parameters())
-            self.critic_optimizer.step()
-            if self._lr_schedulers[0] is not None:
-                self._lr_schedulers[0].step()
-
-            # --- actor (every step -- FQL has no policy_freq-style delay) ---
-            # In "shared" mode bc/onestep/q features all alias one detached
-            # forward through the shared encoder (today's behavior). In
-            # "separate" mode each is a fresh, grad-enabled forward through
-            # that network's own encoder -- q_features in particular cannot
-            # reuse `obs_features` above: its graph was already consumed by
-            # critic_loss.backward(), so PyTorch would raise on a second
-            # backward through it. See FQLPolicy.extract_actor_loss_features.
-            bc_features, onestep_features, q_features = self.policy.extract_actor_loss_features(
-                data.obs, critic_features=obs_features
-            )
-            batch_size = data.actions.shape[0]
-            action_dim = data.actions.shape[-1]
-            device, dtype = bc_features.device, bc_features.dtype
-
-            x_0 = torch.randn(batch_size, action_dim, device=device, dtype=dtype)
-            t = torch.rand(batch_size, 1, device=device, dtype=dtype)
-            x_t = (1 - t) * x_0 + t * data.actions
-            vel_target = data.actions - x_0
-            pred_vel = self.policy.actor_bc_flow(bc_features, x_t, t)
-            bc_flow_loss = F.mse_loss(pred_vel, vel_target)
-
-            noises = torch.randn(batch_size, action_dim, device=device, dtype=dtype)
-            with torch.no_grad():
-                target_flow_actions = self.policy.compute_flow_actions(
-                    bc_features, noises, self.flow_steps
-                )
-            actor_actions = self.policy.actor_onestep_flow(onestep_features, noises)
-            distill_loss = F.mse_loss(actor_actions, target_flow_actions)
-
-            clipped_actions = actor_actions.clamp(
-                self.policy.action_low, self.policy.action_high
-            )
-            q_all_pi = self.policy.q_values_all(
-                q_features, clipped_actions, target=False
-            )
-            q_pi = q_all_pi.mean(dim=0)  # actor loss always averages the ensemble
-            q_loss = -q_pi.mean()
-            if self.normalize_q_loss:
-                lam = (1.0 / q_pi.abs().mean()).detach()
-                q_loss = lam * q_loss
-
-            actor_loss = bc_flow_loss + self.alpha * distill_loss + q_loss
-
-            self.actor_optimizer.zero_grad(set_to_none=True)
-            actor_loss.backward()
-            self._clip_grad_norm(self.policy.actor_parameters())
-            self.actor_optimizer.step()
-            if self._lr_schedulers[1] is not None:
-                self._lr_schedulers[1].step()
-
-            polyak_update(
-                self.policy.critic.parameters(),
-                self.policy.critic_target.parameters(),
-                self.tau,
-            )
-
-            for key, value in (
-                ("critic_loss", float(critic_loss.detach().item())),
-                ("actor_loss", float(actor_loss.detach().item())),
-                ("bc_flow_loss", float(bc_flow_loss.detach().item())),
-                ("distill_loss", float(distill_loss.detach().item())),
-                ("q_loss", float(q_loss.detach().item())),
-            ):
+            for key, value in {**critic_metrics, **actor_metrics}.items():
                 metrics_sum[key] = metrics_sum.get(key, 0.0) + value
                 counts[key] = counts.get(key, 0) + 1
 
@@ -493,8 +503,10 @@ class FQL(FQLCore, OfflineRLAlgorithm):
         kernel_init: Optional[KernelInit] = "xavier_uniform",
         backbone_type: BackboneType = "mlp",
         activation_fn: Optional[Activation] = "gelu",
-        encoder_sharing: EncoderSharing = "shared",
-        image_encoder_factory: Optional[ImageEncoderFactory] = None,
+        encoder_sharing: Optional[EncoderSharing] = None,
+        encoder_config: Optional[EncoderConfig] = None,
+        obs_groups: Optional[ObsGroups] = None,
+        critic_encoder_config: Optional[EncoderConfig] = None,
         seed: int = 1,
         device: str | torch.device = "auto",
         logger: Optional[Logger] = None,
@@ -555,13 +567,9 @@ class FQL(FQLCore, OfflineRLAlgorithm):
             backbone_type=backbone_type,
             activation_fn=activation_fn,
             encoder_sharing=encoder_sharing,
-            image_encoder_factory=image_encoder_factory,
+            encoder_config=encoder_config,
+            obs_groups=obs_groups,
+            critic_encoder_config=critic_encoder_config,
         )
-
-        obs_space = self.env.single_observation_space
-        if not isinstance(obs_space, (spaces.Box, spaces.Dict)):
-            raise TypeError(
-                f"FQL supports only Box or Dict observation spaces, got {type(obs_space)}"
-            )
 
         self._setup_model()

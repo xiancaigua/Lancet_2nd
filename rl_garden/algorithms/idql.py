@@ -1,6 +1,19 @@
 """IDQL (Hansen-Estruch et al. 2023, arXiv:2304.10573): IQL-style expectile
 value/critic regression paired with a diffusion actor instead of a Gaussian
-one. State-based (Box observations) only, matching ``DiffusionMLP``'s scope.
+one. Box or Dict (CNN-based vision) observations -- ``DiffusionMLP`` is
+features-agnostic (``forward(x, time, cond)`` reshapes ``cond["state"]``,
+which is just a dict-key label, not a raw-obs assumption), and
+``IDQLPolicy`` calls ``extract_actor_features``/``extract_critic_features``
+(the policy-extractor contract, ``rl_garden/policies/base.py``) once per obs
+per role, reusing each tensor across the N-sample repeat-interleave and
+every denoising step. Encoder selection is the shared observation-redesign
+mixin (``encoder_config``/``obs_groups``/``critic_encoder_config``,
+``rl_garden/algorithms/_observation.py``) -- default ``encoder_sharing`` is
+``"shared"`` (one encoder trained by every loss term; see the class
+attribute below), and ``encoder_sharing="separate"`` with an asymmetric
+``obs_groups`` or a distinct ``critic_encoder_config`` gives value/critic
+their own encoder, independent from the diffusion actor's. IDQL has no
+``policy_kwargs`` mechanism of its own.
 
 Standalone -- does not subclass ``IQLCore`` (`rl_garden/algorithms/iql.py`).
 ``IQLCore``'s value/critic math is literally the same math IDQL needs, but
@@ -32,17 +45,19 @@ expectile-weighted stochastic resample.
 """
 from __future__ import annotations
 
+import dataclasses
 from typing import Any, Literal, Optional, Sequence
 
 import torch
 import torch.nn.functional as F
-from gymnasium import spaces
 
+from rl_garden.algorithms._observation import EncoderSharing
 from rl_garden.algorithms.offline import OfflineEnvSpec, OfflineRLAlgorithm
-from rl_garden.buffers.tensor_buffer import TensorReplayBuffer
+from rl_garden.buffers.replay_buffer import ReplayBuffer
 from rl_garden.common.logger import Logger
 from rl_garden.common.optim import make_lr_scheduler, make_optimizer
-from rl_garden.encoders.flatten import FlattenExtractor
+from rl_garden.encoders.config import EncoderConfig
+from rl_garden.observations import ObsGroups
 from rl_garden.policies.idql_policy import IDQLPolicy
 
 ActorObjective = Literal["bc", "soft_adv", "hard_adv", "exp_adv"]
@@ -50,6 +65,16 @@ ActorObjective = Literal["bc", "soft_adv", "hard_adv", "exp_adv"]
 
 class IDQL(OfflineRLAlgorithm):
     _compatible_checkpoint_algorithms = ("IDQL",)
+    # Class-level default (read by algorithm_registry's static preflight,
+    # see rl_garden/algorithms/_observation.py), overridable via the
+    # `encoder_sharing` constructor kwarg below. Under the default "shared"
+    # (not the mixin's inherited "shared_critic_grad"): `_compute_losses`/
+    # `diffusion_loss` extract features via `extract_critic_features`/
+    # `extract_actor_features` with no stop-gradient, and value/critic/actor
+    # losses sum into one `.backward()` before `critic_value_optimizer.step()`
+    # (which owns the shared extractor's parameters) -- the encoder is
+    # trained by every loss term.
+    encoder_sharing: EncoderSharing = "shared"
 
     def __init__(
         self,
@@ -84,6 +109,11 @@ class IDQL(OfflineRLAlgorithm):
         buffer_device: str = "cuda",
         batch_size: int = 256,
         offline_sampling: str = "with_replace",
+        encoder_config: Optional[EncoderConfig] = None,
+        obs_groups: Optional[ObsGroups] = None,
+        critic_encoder_config: Optional[EncoderConfig] = None,
+        encoder_sharing: Optional[EncoderSharing] = None,
+        image_augmentation_seed: Optional[int] = None,
         seed: int = 1,
         device: str | torch.device = "auto",
         logger: Optional[Logger] = None,
@@ -141,20 +171,34 @@ class IDQL(OfflineRLAlgorithm):
         self.lr_decay_steps = lr_decay_steps
         self.lr_min_ratio = lr_min_ratio
         self.grad_clip_norm = grad_clip_norm
+        self.encoder_config = encoder_config
+        self.obs_groups = obs_groups
+        self.critic_encoder_config = critic_encoder_config
+        self.encoder_sharing = encoder_sharing
+        self._image_augmentation_seed = image_augmentation_seed
 
-        if not isinstance(self.env.single_observation_space, spaces.Box):
-            raise TypeError(
-                f"IDQL supports Box observation spaces only, got "
-                f"{type(self.env.single_observation_space)}"
-            )
         self._setup_model()
 
+    def _build_replay_buffer(self):
+        # obs_space is always Dict (boundary normalization is unconditional).
+        return ReplayBuffer(
+            observation_space=self.env.single_observation_space,
+            action_space=self.env.single_action_space,
+            num_envs=self.num_envs,
+            buffer_size=self.buffer_size,
+            storage_device=self.buffer_device,
+            sample_device=self.device,
+        )
+
     def _setup_model(self) -> None:
-        features_extractor = FlattenExtractor(self.env.single_observation_space)
+        extractor_kwargs = self._policy_extractor_kwargs(
+            self.env.single_observation_space,
+            augmentation_seed=self._image_augmentation_seed,
+        )
         self.policy = IDQLPolicy(
             observation_space=self.env.single_observation_space,
             action_space=self.env.single_action_space,
-            features_extractor=features_extractor,
+            **extractor_kwargs,
             critic_hidden_dims=self.critic_hidden_dims,
             value_hidden_dims=self.value_hidden_dims,
             n_critics=self.n_critics,
@@ -180,14 +224,7 @@ class IDQL(OfflineRLAlgorithm):
             weight_decay=self.weight_decay,
             use_adamw=self.use_adamw,
         )
-        self.replay_buffer = TensorReplayBuffer(
-            observation_space=self.env.single_observation_space,
-            action_space=self.env.single_action_space,
-            num_envs=self.num_envs,
-            buffer_size=self.buffer_size,
-            storage_device=self.buffer_device,
-            sample_device=self.device,
-        )
+        self.replay_buffer = self._build_replay_buffer()
         self._lr_schedulers = [
             make_lr_scheduler(
                 self.critic_value_optimizer,
@@ -224,22 +261,22 @@ class IDQL(OfflineRLAlgorithm):
         raise ValueError(f"Unknown actor_objective: {self.actor_objective!r}")
 
     def _compute_losses(self, data) -> tuple[torch.Tensor, dict[str, float]]:
-        features = self.policy.extract_features(data.obs, stop_gradient=False)
+        critic_features = self.policy.extract_critic_features(data.obs)
 
         with torch.no_grad():
             target_q_for_value = self.policy.min_q_value(
-                features.detach(),
+                critic_features.detach(),
                 data.actions,
                 subsample_size=self.critic_subsample_size,
                 target=True,
             )
-        values = self.policy.value(features)
+        values = self.policy.value(critic_features)
         value_loss = self._expectile_loss(target_q_for_value - values).mean()
 
-        q_pred = self.policy.q_values_all(features, data.actions, target=False)
+        q_pred = self.policy.q_values_all(critic_features, data.actions, target=False)
         with torch.no_grad():
-            next_features = self.policy.extract_features(data.next_obs, stop_gradient=False)
-            next_v = self.policy.value(next_features)
+            next_critic_features = self.policy.extract_critic_features(data.next_obs)
+            next_v = self.policy.value(next_critic_features)
             target_q = (
                 data.rewards.unsqueeze(-1)
                 + self.gamma * (1.0 - data.dones.unsqueeze(-1)) * next_v
@@ -329,4 +366,18 @@ class IDQL(OfflineRLAlgorithm):
             "denoising_steps": self.denoising_steps,
             "schedule": self.schedule,
             "n_action_samples": self.n_action_samples,
+            "encoder_sharing": self.encoder_sharing,
+            "encoder_sharing_origin": self.encoder_sharing_origin,
+            "encoder_config": (
+                dataclasses.asdict(self.encoder_config) if self.encoder_config is not None else None
+            ),
+            "obs_groups": (
+                dataclasses.asdict(self.obs_groups) if self.obs_groups is not None else None
+            ),
+            "critic_encoder_config": (
+                dataclasses.asdict(self.critic_encoder_config)
+                if self.critic_encoder_config is not None
+                else None
+            ),
+            "image_augmentation_seed": self._image_augmentation_seed,
         }

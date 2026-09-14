@@ -7,11 +7,33 @@ from gymnasium import spaces
 
 from rl_garden.algorithms import OfflineEnvSpec
 from rl_garden.algorithms.qam import QAM
+from rl_garden.encoders.config import EncoderConfig
+
+# Small + fast: "gap" pooling (unlike the default "flatten") tolerates tiny
+# images without PlainConv's flatten-layer size mismatch. Mirrors
+# tests/test_fql_core.py's own vision-test encoder config.
+_TEST_IMAGE_SIZE = 16
+_test_encoder_config = EncoderConfig(features_dim=16, plain_conv_pooling="gap")
 
 
 def _state_env(num_envs: int = 1) -> OfflineEnvSpec:
     return OfflineEnvSpec(
         spaces.Box(low=-1.0, high=1.0, shape=(6,), dtype=np.float32),
+        spaces.Box(low=-1.0, high=1.0, shape=(3,), dtype=np.float32),
+        num_envs=num_envs,
+    )
+
+
+def _vision_env(num_envs: int = 1) -> OfflineEnvSpec:
+    return OfflineEnvSpec(
+        spaces.Dict(
+            {
+                "rgb_cam": spaces.Box(
+                    low=0, high=255, shape=(_TEST_IMAGE_SIZE, _TEST_IMAGE_SIZE, 3), dtype=np.uint8
+                ),
+                "state": spaces.Box(low=-1.0, high=1.0, shape=(6,), dtype=np.float32),
+            }
+        ),
         spaces.Box(low=-1.0, high=1.0, shape=(3,), dtype=np.float32),
         num_envs=num_envs,
     )
@@ -32,10 +54,14 @@ def _make_agent(**kwargs) -> QAM:
 
 
 def _fill(agent: QAM, steps: int = 64) -> None:
+    # env.single_observation_space is Dict({"state": Box}) -- OfflineEnvSpec's
+    # bare Box is boundary-normalized by BaseAlgorithm.__init__ (see
+    # rl_garden.envs.wrappers.VectorizedDictStateWrapper).
     env = agent.env
+    state_shape = env.single_observation_space["state"].shape
     for _ in range(steps):
-        obs = torch.randn(env.num_envs, *env.single_observation_space.shape)
-        next_obs = torch.randn_like(obs)
+        obs = {"state": torch.randn(env.num_envs, *state_shape)}
+        next_obs = {"state": torch.randn_like(obs["state"])}
         actions = torch.rand(env.num_envs, *env.single_action_space.shape) * 2 - 1
         rewards = torch.randn(env.num_envs)
         dones = torch.zeros(env.num_envs)
@@ -48,7 +74,7 @@ def test_rejects_unsupported_observation_space():
         spaces.Box(low=-1.0, high=1.0, shape=(3,), dtype=np.float32),
         num_envs=1,
     )
-    with pytest.raises(TypeError, match="Box"):
+    with pytest.raises(ValueError, match="Box"):
         QAM(env=unsupported, buffer_device="cpu", device="cpu")
 
 
@@ -67,6 +93,46 @@ def test_gradient_step_produces_finite_losses(critic_loss_type):
         assert np.isfinite(metrics[key]), (key, metrics[key])
     if critic_loss_type == "iql":
         assert "value_loss" in metrics
+
+
+def test_vision_smoke():
+    """Dict/RGBD obs via CombinedExtractor + ChunkedReplayBuffer -- the
+    milestone-3 vision path. Mirrors tests/test_fql_core.py's own vision
+    smoke test shape."""
+    agent = _make_agent(env=_vision_env(), encoder_config=_test_encoder_config)
+    env = agent.env
+    obs_space = env.single_observation_space
+    img_shape = (_TEST_IMAGE_SIZE, _TEST_IMAGE_SIZE, 3)
+    for _ in range(64):
+        obs = {
+            "rgb_cam": torch.randint(0, 256, (env.num_envs, *img_shape), dtype=torch.uint8),
+            "state": torch.randn(env.num_envs, *obs_space["state"].shape),
+        }
+        next_obs = {
+            "rgb_cam": torch.randint(0, 256, (env.num_envs, *img_shape), dtype=torch.uint8),
+            "state": torch.randn(env.num_envs, *obs_space["state"].shape),
+        }
+        actions = torch.rand(env.num_envs, *env.single_action_space.shape) * 2 - 1
+        rewards = torch.randn(env.num_envs)
+        dones = torch.zeros(env.num_envs)
+        agent.replay_buffer.add(obs, next_obs, actions, rewards, dones)
+
+    metrics = agent.train(1, compute_info=True)
+    for key in ("critic_loss", "flow_loss", "adj_loss", "actor_loss"):
+        assert key in metrics
+        assert np.isfinite(metrics[key]), (key, metrics[key])
+
+    obs = {
+        "rgb_cam": torch.randint(
+            0, 256, (1, _TEST_IMAGE_SIZE, _TEST_IMAGE_SIZE, 3), dtype=torch.uint8
+        ),
+        "state": torch.randn(1, 6),
+    }
+    with torch.no_grad():
+        action = agent.policy.predict(obs)
+    assert action.shape == (1, 3)
+    assert torch.all(action >= -1.0 - 1e-4)
+    assert torch.all(action <= 1.0 + 1e-4)
 
 
 def test_fql_alpha_bolt_on_finite_losses():
@@ -132,6 +198,43 @@ def test_checkpoint_round_trip():
         agent.save(path, include_replay_buffer=False)
 
         loaded = _make_agent()
+        loaded.load(path, load_replay_buffer=False)
+
+    for key, value in agent.policy.state_dict().items():
+        assert torch.equal(value, loaded.policy.state_dict()[key]), key
+
+
+def test_checkpoint_round_trip_with_encoder_config():
+    """Vision env + a non-default encoder_config: exercises the
+    dataclasses.asdict(...) branch of _checkpoint_metadata (encoder_config/
+    obs_groups), not just the None default."""
+    import os
+    import tempfile
+
+    agent = _make_agent(env=_vision_env(), encoder_config=_test_encoder_config)
+    env = agent.env
+    obs_space = env.single_observation_space
+    img_shape = (_TEST_IMAGE_SIZE, _TEST_IMAGE_SIZE, 3)
+    for _ in range(8):
+        obs = {
+            "rgb_cam": torch.randint(0, 256, (env.num_envs, *img_shape), dtype=torch.uint8),
+            "state": torch.randn(env.num_envs, *obs_space["state"].shape),
+        }
+        next_obs = {
+            "rgb_cam": torch.randint(0, 256, (env.num_envs, *img_shape), dtype=torch.uint8),
+            "state": torch.randn(env.num_envs, *obs_space["state"].shape),
+        }
+        actions = torch.rand(env.num_envs, *env.single_action_space.shape) * 2 - 1
+        rewards = torch.randn(env.num_envs)
+        dones = torch.zeros(env.num_envs)
+        agent.replay_buffer.add(obs, next_obs, actions, rewards, dones)
+    agent.train(1)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        path = os.path.join(tmpdir, "ckpt.pt")
+        agent.save(path, include_replay_buffer=False)
+
+        loaded = _make_agent(env=_vision_env(), encoder_config=_test_encoder_config)
         loaded.load(path, load_replay_buffer=False)
 
     for key, value in agent.policy.state_dict().items():
@@ -208,7 +311,7 @@ def test_cuda_smoke_all_modes_and_horizons(horizon_length, critic_loss_type, bol
     assert all(np.isfinite(v) for v in metrics.values()), metrics
 
     agent.policy.zero_grad(set_to_none=True)
-    obs = torch.randn(4, 6, device="cuda")
+    obs = {"state": torch.randn(4, 6, device="cuda")}
     action = agent.policy.predict(obs)
     assert action.shape == (4, 3 * horizon_length)
     assert torch.all(action >= agent.policy.action_low)

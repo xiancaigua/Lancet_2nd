@@ -6,51 +6,31 @@ import warnings
 from typing import Literal
 
 
-def _drqv2_env_request(args, run_name):
-    from rl_garden.envs.backend_registry import EnvRequest, should_create_eval_env
-
-    backend_config = args.resolve_backend_config()
-    eval_record_dir = (
-        None
-        if args.eval_freq <= 0
-        else args.eval_output_dir or f"{args.log_dir}/{run_name}/eval_videos"
-    )
-    return EnvRequest(
-        env_id=args.env_id,
-        num_envs=args.num_envs,
-        obs_mode=args.obs_mode,
-        control_mode=args.control_mode,
-        render_mode=args.render_mode,
-        seed=args.seed,
-        camera_width=args.camera_width,
-        camera_height=args.camera_height,
-        include_state=args.include_state,
-        per_camera_rgbd=args.per_camera_rgbd,
-        frame_stack=args.frame_stack,
-        num_eval_envs=args.num_eval_envs,
-        eval_record_dir=eval_record_dir,
-        capture_video=args.capture_video,
-        video_fps=args.video_fps,
-        num_eval_steps=args.num_eval_steps,
-        create_eval_env=should_create_eval_env(args),
-        backend_config=backend_config,
-    )
-
-
 def build_drqv2(args, env, eval_env, logger, checkpoint_dir):
+    from rl_garden.common.cli_args import resolve_critic_encoder_config, resolve_obs_groups_config
     from rl_garden.algorithms.ddpg import DDPG
-    from rl_garden.common.cli_args import image_encoder_factory_from_args
-    from rl_garden.encoders import discover_image_keys
     from rl_garden.training.inspection import construct_agent
 
-    if args.encoder != "drqv2_conv":
+    if args.encoder.backbone != "drqv2_conv":
         warnings.warn(
             f"DrQv2's validated default encoder is 'drqv2_conv'; overriding "
-            f"with --encoder {args.encoder!r} deviates from the DrQ-v2 paper "
-            "architecture.",
+            f"with --encoder.backbone {args.encoder.backbone!r} deviates from "
+            "the DrQ-v2 paper architecture.",
             stacklevel=2,
         )
-    image_keys = discover_image_keys(env.single_observation_space)
+    # DDPG requires image observations (see DDPG.__init__'s validated
+    # default and _setup_model's "at least one image key" check) -- that
+    # restriction is independent of critic_encoder_config/encoder_sharing,
+    # which DDPG does support (a distinct/differently-backboned critic
+    # encoder over the same image+state keys).
+    image_kwargs: dict = {
+        "encoder_config": args.encoder if args.obs.is_visual else None,
+        "obs_groups": resolve_obs_groups_config(args),
+        "critic_encoder_config": resolve_critic_encoder_config(args),
+    }
+    if args.encoder_sharing is not None:
+        image_kwargs["encoder_sharing"] = args.encoder_sharing
+
     agent = construct_agent(
         DDPG,
         env=env,
@@ -65,6 +45,7 @@ def build_drqv2(args, env, eval_env, logger, checkpoint_dir):
         batch_size=args.batch_size,
         gamma=args.gamma,
         tau=args.tau,
+        bootstrap_at_done=args.bootstrap_at_done,
         training_freq=args.training_freq,
         utd=args.utd,
         policy_lr=args.policy_lr,
@@ -78,12 +59,6 @@ def build_drqv2(args, env, eval_env, logger, checkpoint_dir):
         weight_decay=args.weight_decay,
         use_adamw=args.use_adamw,
         grad_clip_norm=args.grad_clip_norm,
-        image_keys=image_keys,
-        image_fusion_mode=args.image_fusion_mode,
-        image_augmentation=args.image_augmentation,
-        random_shift_pad=args.image_random_shift_pad,
-        enable_stacking=args.frame_stack > 1,
-        image_encoder_factory=image_encoder_factory_from_args(args),
         image_augmentation_seed=args.seed + 1_000_003,
         seed=args.seed,
         logger=logger,
@@ -95,6 +70,7 @@ def build_drqv2(args, env, eval_env, logger, checkpoint_dir):
         checkpoint_freq=args.checkpoint_freq,
         save_replay_buffer=args.save_replay_buffer,
         save_final_checkpoint=args.save_final_checkpoint,
+        **image_kwargs,
     )
     if args.load_checkpoint is not None:
         agent.load(args.load_checkpoint, load_replay_buffer=args.load_replay_buffer)
@@ -109,9 +85,11 @@ def run_drqv2(args: DrQv2Args) -> None:
             "--load-replay-buffer is not supported with --mmap-dir; "
             "use --mmap-mode open to resume the disk-backed buffer"
         )
+    from rl_garden.common.env_args import make_env_request
+
     run_online(
         args,
-        make_env_request=_drqv2_env_request,
+        make_env_request=make_env_request,
         build_agent=build_drqv2,
         post_learn=lambda agent: agent.replay_buffer.flush(),
     )
@@ -123,14 +101,16 @@ def run_drqv2(args: DrQv2Args) -> None:
 
 from dataclasses import dataclass
 
-from rl_garden.common.cli_args import CheckpointArgs
+from rl_garden.common.cli_args import CheckpointArgs, ObservationArgs
 from rl_garden.common.env_args import EnvBackendArgs, EnvRunArgs
 from rl_garden.training.online._registry import registry
 
 
 @dataclass
-class DrQv2Args(EnvRunArgs, CheckpointArgs, EnvBackendArgs):
-    """DrQ-v2 with multi-env backend support.
+class DrQv2Args(EnvRunArgs, CheckpointArgs, ObservationArgs, EnvBackendArgs):
+    """DrQ-v2 with multi-env backend support. Requires image observations
+    (``DDPG``'s "at least one image observation key" check) -- pass
+    ``--obs.rgb <camera>`` (optionally ``--obs.depth <camera>``).
 
     ManiSkill-specific: ``--maniskill.sim-backend``, ``--maniskill.render-backend``,
     ``--maniskill.reward-mode``.
@@ -138,13 +118,6 @@ class DrQv2Args(EnvRunArgs, CheckpointArgs, EnvBackendArgs):
 
     # --- Env (overrides EnvRunArgs' defaults) ---
     control_mode: str = "pd_ee_delta_pose"
-
-    # --- Env (not part of EnvRunArgs) ---
-    obs_mode: str = "rgbd"
-    include_state: bool = True
-    camera_width: int = 128
-    camera_height: int = 128
-    per_camera_rgbd: bool = False
 
     # --- Training ---
     total_timesteps: int = 1_000_000
@@ -158,6 +131,7 @@ class DrQv2Args(EnvRunArgs, CheckpointArgs, EnvBackendArgs):
     # --- DDPG ---
     gamma: float = 0.99
     tau: float = 0.01
+    bootstrap_at_done: Literal["always", "never", "truncated"] = "truncated"
     training_freq: int = 32
     utd: float = 0.5
     policy_lr: float = 1e-4
@@ -172,19 +146,6 @@ class DrQv2Args(EnvRunArgs, CheckpointArgs, EnvBackendArgs):
     weight_decay: float = 0.0
     use_adamw: bool = False
 
-    # --- Vision ---
-    image_fusion_mode: str = "stack_channels"
-    image_augmentation: str = "random_shift"
-    image_random_shift_pad: int = 4
-    frame_stack: int = 1
-    encoder: Literal["drqv2_conv", "cnn3d"] = "drqv2_conv"
-    encoder_features_dim: int = 256
-    # Unused for drqv2_conv/cnn3d; required attributes for
-    # image_encoder_factory_from_args()'s resnet-only-flag validation.
-    pretrained_weights: str | None = None
-    freeze_resnet_encoder: bool = False
-    freeze_resnet_backbone: bool = False
-
     # --- Checkpoint (overrides CheckpointArgs' default) ---
     load_replay_buffer: bool = False
 
@@ -193,4 +154,10 @@ class DrQv2Args(EnvRunArgs, CheckpointArgs, EnvBackendArgs):
     replay_pin_sampled_batch: bool = False
 
 
-registry.register("drqv2", DrQv2Args, run_drqv2)
+def _drqv2_algorithm_cls() -> type:
+    from rl_garden.algorithms.ddpg import DDPG
+
+    return DDPG
+
+
+registry.register("drqv2", DrQv2Args, run_drqv2, algorithm_cls=_drqv2_algorithm_cls)

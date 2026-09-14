@@ -4,7 +4,7 @@ Does not reuse ``rl_garden.training.offline._runner.run_offline``: that
 runner assumes one homogeneous dataset via ``infer_offline_dataset_specs``/
 ``load_offline_dataset``, which doesn't fit "N tasks, each with its own
 obs/action dimensionality, zero-padded to a shared max" (see
-``rl_garden.algorithms.tdmpc2.multitask.dataset``). It does reuse the
+``rl_garden.buffers.tdmpc2_multitask_dataset``). It does reuse the
 generic ``run_offline_pretraining`` step loop (checkpointing/logging/
 progress bar), since ``TDMPC2Multitask.train(gradient_steps)`` already
 matches that loop's expected agent interface.
@@ -45,8 +45,8 @@ def _run_tdmpc2_multitask(
     from gymnasium import spaces
 
     from rl_garden.algorithms.offline import OfflineEnvSpec, run_offline_pretraining
-    from rl_garden.algorithms.tdmpc2.multitask import TDMPC2Multitask
-    from rl_garden.algorithms.tdmpc2.multitask.dataset import (
+    from rl_garden.algorithms.tdmpc2_multitask import TDMPC2Multitask
+    from rl_garden.buffers.tdmpc2_multitask_dataset import (
         infer_multitask_dataset_specs,
         load_multitask_dataset,
     )
@@ -66,6 +66,16 @@ def _run_tdmpc2_multitask(
         raise SystemExit("--dataset_dir is required for tdmpc2_multitask.")
     if not args.mmap_dir:
         raise SystemExit("--mmap_dir is required for tdmpc2_multitask.")
+    if args.obs.is_visual:
+        from rl_garden.observations import ObservationContractError
+
+        raise ObservationContractError(
+            "tdmpc2_multitask is state-only: TDMPC2Multitask (per-task "
+            "zero-padded Box observations, see rl_garden.algorithms.tdmpc2_multitask) has "
+            "no encoder_config/obs_groups parameters at all, unlike the "
+            "single-task TDMPC2 agent -- got --obs.rgb/--obs.depth cameras "
+            f"{args.obs.rgb + args.obs.depth}."
+        )
 
     seed_everything(args.seed)
 
@@ -219,15 +229,23 @@ def _run_tdmpc2_multitask(
 
 from dataclasses import dataclass
 
+from rl_garden.common.cli_args import ObservationArgs
 from rl_garden.training.offline._args import TDMPC2MultitaskTrainingArgs
 from rl_garden.training.offline._registry import registry
 
 
 @dataclass
-class TDMPC2MultitaskArgs(TDMPC2MultitaskTrainingArgs):
+class TDMPC2MultitaskArgs(TDMPC2MultitaskTrainingArgs, ObservationArgs):
     """TD-MPC2 multitask offline pretraining. Requires ``--dataset_dir``
     (output of ``tools/conversion/convert_tdmpc2_multitask_dataset.py``) and
-    ``--mmap_dir`` (a fresh directory for the training-time mmap buffer)."""
+    ``--mmap_dir`` (a fresh directory for the training-time mmap buffer).
+
+    State-only: unlike the single-task ``tdmpc2`` entrypoint, the underlying
+    ``TDMPC2Multitask`` algorithm has no ``encoder_config``/``obs_groups``
+    parameters (per-task Box observations, zero-padded to a shared max dim --
+    see ``rl_garden.algorithms.tdmpc2_multitask``); ``--obs.rgb``/``--obs.depth`` raise
+    ``ObservationContractError`` at the top of ``run_tdmpc2_multitask``.
+    """
 
 
 registry.register(

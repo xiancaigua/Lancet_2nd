@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from rl_garden.training.online.rlpd import _rlpd_env_request
 
 
 def build_explore(args, env, eval_env, logger, checkpoint_dir):
     from rl_garden.algorithms import ExPLORe
+    from rl_garden.common.cli_args import resolve_critic_encoder_config, resolve_obs_groups_config
     from rl_garden.training.inspection import construct_agent
     from rl_garden.training.online._args import sac_initial_training_phase_from_args
 
@@ -14,6 +14,15 @@ def build_explore(args, env, eval_env, logger, checkpoint_dir):
         "pi": [args.hidden_dim] * args.actor_hidden_layers,
         "qf": [args.hidden_dim] * args.critic_hidden_layers,
     }
+    image_kwargs: dict = {
+        "encoder_config": args.encoder if args.obs.is_visual else None,
+        "obs_groups": resolve_obs_groups_config(args),
+        "critic_encoder_config": resolve_critic_encoder_config(args),
+        "image_augmentation_seed": args.seed + 1_000_003,
+        "critic_backbone_type": args.critic_backbone_type,
+    }
+    if args.encoder_sharing is not None:
+        image_kwargs["encoder_sharing"] = args.encoder_sharing
 
     agent = construct_agent(
         ExPLORe,
@@ -45,6 +54,7 @@ def build_explore(args, env, eval_env, logger, checkpoint_dir):
         gamma=args.gamma,
         nstep=args.nstep,
         tau=args.tau,
+        bootstrap_at_done=args.bootstrap_at_done,
         training_freq=args.training_freq,
         utd=args.utd,
         policy_lr=args.policy_lr,
@@ -81,6 +91,7 @@ def build_explore(args, env, eval_env, logger, checkpoint_dir):
         checkpoint_freq=args.checkpoint_freq,
         save_replay_buffer=args.save_replay_buffer,
         save_final_checkpoint=args.save_final_checkpoint,
+        **image_kwargs,
     )
     if args.load_checkpoint is not None:
         agent.load(args.load_checkpoint, load_replay_buffer=args.load_replay_buffer)
@@ -122,10 +133,12 @@ def run_explore(args: ExPLOREArgs) -> None:
             "--load-replay-buffer is not supported with --mmap-dir; "
             "use --mmap-mode open to resume the disk-backed buffer"
         )
+    from rl_garden.common.env_args import make_env_request
+
     run_online(
         args,
         obs_tag="state",
-        make_env_request=_rlpd_env_request,
+        make_env_request=make_env_request,
         build_agent=build_explore,
         post_learn=lambda agent: getattr(agent.replay_buffer, "flush", lambda: None)(),
     )
@@ -160,4 +173,10 @@ class ExPLOREArgs(RLPDArgs):
     rnd_lr: float = 3e-4
 
 
-registry.register("explore", ExPLOREArgs, run_explore)
+def _explore_algorithm_cls() -> type:
+    from rl_garden.algorithms import ExPLORe
+
+    return ExPLORe
+
+
+registry.register("explore", ExPLOREArgs, run_explore, algorithm_cls=_explore_algorithm_cls)

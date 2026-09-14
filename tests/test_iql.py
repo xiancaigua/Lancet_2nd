@@ -6,7 +6,8 @@ import torch
 from gymnasium import spaces
 
 from rl_garden.algorithms import IQL, OfflineEnvSpec
-from rl_garden.buffers import DictReplayBuffer, TensorReplayBuffer
+from rl_garden.buffers import ReplayBuffer
+from rl_garden.encoders.config import EncoderConfig
 
 
 def _state_env(num_envs: int = 2) -> OfflineEnvSpec:
@@ -21,7 +22,7 @@ def _dict_env(num_envs: int = 2) -> OfflineEnvSpec:
     return OfflineEnvSpec(
         spaces.Dict(
             {
-                "rgb": spaces.Box(0, 255, shape=(64, 64, 3), dtype=np.uint8),
+                "rgb_cam": spaces.Box(0, 255, shape=(64, 64, 3), dtype=np.uint8),
                 "state": spaces.Box(-np.inf, np.inf, shape=(4,), dtype=np.float32),
             }
         ),
@@ -32,9 +33,13 @@ def _dict_env(num_envs: int = 2) -> OfflineEnvSpec:
 
 def _fill_state(agent: IQL, steps: int = 8) -> None:
     env = agent.env
+    # env.single_observation_space is Dict({"state": Box}) -- OfflineEnvSpec's
+    # bare Box is boundary-normalized by BaseAlgorithm.__init__ (see
+    # rl_garden.envs.wrappers.VectorizedDictStateWrapper).
+    state_shape = env.single_observation_space["state"].shape
     for _ in range(steps):
-        obs = torch.randn(env.num_envs, *env.single_observation_space.shape)
-        next_obs = torch.randn_like(obs)
+        obs = {"state": torch.randn(env.num_envs, *state_shape)}
+        next_obs = {"state": torch.randn_like(obs["state"])}
         actions = torch.randn(env.num_envs, *env.single_action_space.shape).clamp(-1, 1)
         rewards = torch.randn(env.num_envs)
         dones = torch.zeros(env.num_envs)
@@ -45,11 +50,11 @@ def _fill_dict(agent: IQL, steps: int = 4) -> None:
     env = agent.env
     for _ in range(steps):
         obs = {
-            "rgb": torch.randint(0, 256, (env.num_envs, 64, 64, 3), dtype=torch.uint8),
+            "rgb_cam": torch.randint(0, 256, (env.num_envs, 64, 64, 3), dtype=torch.uint8),
             "state": torch.randn(env.num_envs, 4),
         }
         next_obs = {
-            "rgb": torch.randint(0, 256, (env.num_envs, 64, 64, 3), dtype=torch.uint8),
+            "rgb_cam": torch.randint(0, 256, (env.num_envs, 64, 64, 3), dtype=torch.uint8),
             "state": torch.randn(env.num_envs, 4),
         }
         actions = torch.randn(env.num_envs, *env.single_action_space.shape).clamp(-1, 1)
@@ -76,7 +81,7 @@ def test_iql_state_train_step_and_checkpoint(tmp_path):
     info = agent.train(1)
     result = agent.learn_offline(2, save_filename="iql.pt")
 
-    assert isinstance(agent.replay_buffer, TensorReplayBuffer)
+    assert isinstance(agent.replay_buffer, ReplayBuffer)
     assert torch.isfinite(torch.tensor(info["loss"]))
     assert "value_loss" in info
     assert "behavior_log_prob" in info
@@ -94,17 +99,113 @@ def test_iql_dict_uses_dict_replay_and_combined_encoder():
         net_arch=[16],
         n_critics=2,
         critic_subsample_size=2,
-        image_keys=("rgb",),
-        image_fusion_mode="stack_channels",
+        encoder_config=EncoderConfig(image_fusion_mode="stack_channels"),
         std_log=False,
     )
     _fill_dict(agent)
 
     info = agent.train(1)
 
-    assert isinstance(agent.replay_buffer, DictReplayBuffer)
+    assert isinstance(agent.replay_buffer, ReplayBuffer)
     assert torch.isfinite(torch.tensor(info["critic_loss"]))
-    assert agent.policy.features_extractor.features_dim > 0
+    assert agent.policy.actor_extractor.features_dim > 0
+
+
+def _asymmetric_dict_env(num_envs: int = 2) -> OfflineEnvSpec:
+    return OfflineEnvSpec(
+        spaces.Dict(
+            {
+                "rgb_cam": spaces.Box(0, 255, shape=(64, 64, 3), dtype=np.uint8),
+                "state": spaces.Box(-np.inf, np.inf, shape=(4,), dtype=np.float32),
+                "state_object_pose": spaces.Box(-np.inf, np.inf, shape=(3,), dtype=np.float32),
+            }
+        ),
+        spaces.Box(low=-1.0, high=1.0, shape=(2,), dtype=np.float32),
+        num_envs=num_envs,
+    )
+
+
+def _fill_asymmetric_dict(agent: IQL, steps: int = 4) -> None:
+    env = agent.env
+    for _ in range(steps):
+        obs = {
+            "rgb_cam": torch.randint(0, 256, (env.num_envs, 64, 64, 3), dtype=torch.uint8),
+            "state": torch.randn(env.num_envs, 4),
+            "state_object_pose": torch.randn(env.num_envs, 3),
+        }
+        next_obs = {
+            "rgb_cam": torch.randint(0, 256, (env.num_envs, 64, 64, 3), dtype=torch.uint8),
+            "state": torch.randn(env.num_envs, 4),
+            "state_object_pose": torch.randn(env.num_envs, 3),
+        }
+        actions = torch.randn(env.num_envs, *env.single_action_space.shape).clamp(-1, 1)
+        rewards = torch.randn(env.num_envs)
+        dones = torch.zeros(env.num_envs)
+        agent.replay_buffer.add(obs, next_obs, actions, rewards, dones)
+
+
+def test_iql_asymmetric_obs_groups_critic_sees_extra_state_actor_does_not():
+    """End-to-end asymmetric actor/critic encoders via state_<name>: V and Q
+    (critic-role) see state_object_pose, the AWR actor (actor-role) does not,
+    encoder_sharing="separate". Checks schema exclusion and that each role's
+    loss reaches only its own extractor, plus one real update step."""
+    from rl_garden.observations import ObsGroups
+
+    agent = IQL(
+        env=_asymmetric_dict_env(),
+        device="cpu",
+        buffer_device="cpu",
+        buffer_size=32,
+        batch_size=4,
+        net_arch=[16],
+        n_critics=2,
+        critic_subsample_size=2,
+        encoder_config=EncoderConfig(proprio_latent_dim=4),
+        obs_groups=ObsGroups(
+            actor=("rgb_cam", "state"), critic=("rgb_cam", "state", "state_object_pose")
+        ),
+        encoder_sharing="separate",
+        std_log=False,
+    )
+
+    actor_extractor = agent.policy.actor_extractor
+    critic_extractor = agent.policy.critic_extractor
+    assert critic_extractor is not None and critic_extractor is not actor_extractor
+    assert "state_object_pose" not in actor_extractor.state_keys
+    assert "state_object_pose" in critic_extractor.state_keys
+
+    _fill_asymmetric_dict(agent)
+    data = agent._sample_train_batch(agent.batch_size)
+
+    # Critic-role loss (V + Q regression) must reach only critic_extractor.
+    critic_features = agent.policy.extract_critic_features(data.obs)
+    values = agent.policy.value(critic_features)
+    q_pred = agent.policy.q_values_all(critic_features, data.actions, target=False)
+    critic_role_loss = values.pow(2).mean() + q_pred.pow(2).mean()
+    critic_grad_on_critic = torch.autograd.grad(
+        critic_role_loss, list(critic_extractor.parameters()), retain_graph=True, allow_unused=True
+    )
+    assert any(g is not None and torch.any(g != 0) for g in critic_grad_on_critic)
+    critic_grad_on_actor = torch.autograd.grad(
+        critic_role_loss, list(actor_extractor.parameters()), allow_unused=True
+    )
+    assert all(g is None for g in critic_grad_on_actor)
+
+    # Actor-role loss (AWR log-prob) must reach only actor_extractor.
+    log_prob, _ = agent.policy.behavior_log_prob(data.obs, data.actions)
+    actor_role_loss = log_prob.mean()
+    actor_grad_on_actor = torch.autograd.grad(
+        actor_role_loss, list(actor_extractor.parameters()), retain_graph=True, allow_unused=True
+    )
+    assert any(g is not None and torch.any(g != 0) for g in actor_grad_on_actor)
+    actor_grad_on_critic = torch.autograd.grad(
+        actor_role_loss, list(critic_extractor.parameters()), allow_unused=True
+    )
+    assert all(g is None for g in actor_grad_on_critic)
+
+    # A real end-to-end update step also runs cleanly.
+    info = agent.train(1)
+    assert torch.isfinite(torch.tensor(info["loss"]))
 
 
 def _make_state_agent(**overrides) -> IQL:
@@ -144,8 +245,8 @@ def test_target_min_q_uses_target_critic(monkeypatch):
         return original(*args, **kwargs)
 
     monkeypatch.setattr(agent.policy, "min_q_value", _spy)
-    features = agent.policy.extract_features(
-        torch.randn(8, 4), stop_gradient=True
+    features = agent.policy.extract_critic_features(
+        {"state": torch.randn(8, 4)}, stop_gradient=True
     )
     agent._target_min_q(features, torch.randn(8, 2).clamp(-1, 1))
 
@@ -186,18 +287,13 @@ def test_iql_checkpoint_roundtrip_restores_weights(tmp_path):
         assert torch.equal(value, loaded.policy.state_dict()[key]), key
 
 
-def test_iql_box_obs_rejects_image_kwargs():
-    with pytest.raises(ValueError, match="Box observation space"):
-        _make_state_agent(image_keys=("rgb",))
-
-
 def test_iql_unsupported_obs_space_raises_type_error():
     env = OfflineEnvSpec(
         spaces.Discrete(4),
         spaces.Box(low=-1.0, high=1.0, shape=(2,), dtype=np.float32),
         num_envs=2,
     )
-    with pytest.raises(TypeError, match="Box or Dict"):
+    with pytest.raises(ValueError, match="Box or Dict"):
         _make_state_agent(env=env)
 
 

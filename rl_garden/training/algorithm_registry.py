@@ -11,10 +11,11 @@ from collections.abc import Callable, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional
 
 import tyro
 
-from rl_garden.common.cli_args import resolve_num_eval_steps
+from rl_garden.common.cli_args import resolve_critic_encoder_config, resolve_num_eval_steps
 from rl_garden.common.effective_config import (
     ConfigError,
     FieldSource,
@@ -28,12 +29,22 @@ from rl_garden.common.effective_config import (
     resolve_effective_config,
     runtime_metadata,
 )
+from rl_garden.observations import ObservationContractError, resolve_encoder_sharing
 
 
 @dataclass(frozen=True)
 class AlgorithmEntry:
     args_cls: type
     run_fn: Callable
+    #: Optional, zero-arg factory returning the algorithm class -- a thunk
+    #: rather than the class itself so registration (which runs at module
+    #: import time, during ``discover()``) never has to import
+    #: ``rl_garden.algorithms`` eagerly; see ``_validate_config``'s static
+    #: encoder_sharing preflight, the only caller. Training modules opt in by
+    #: passing e.g. ``algorithm_cls=lambda: SAC`` (with the import inside the
+    #: lambda) to ``register()``; omitted for algorithms the preflight
+    #: doesn't check.
+    algorithm_cls: Optional[Callable[[], type]] = None
 
 
 @dataclass(frozen=True)
@@ -63,12 +74,14 @@ class BaseAlgorithmRegistry:
         name: str,
         args_cls: type,
         run_fn: Callable,
+        *,
+        algorithm_cls: Optional[Callable[[], type]] = None,
     ) -> None:
         if name in self._entries:
             raise ValueError(f"Algorithm {name!r} already registered")
         if any(entry.args_cls is args_cls for entry in self._entries.values()):
             raise ValueError(f"Args type {args_cls.__name__!r} already registered")
-        self._entries[name] = AlgorithmEntry(args_cls, run_fn)
+        self._entries[name] = AlgorithmEntry(args_cls, run_fn, algorithm_cls)
 
     def entries(self) -> dict[str, AlgorithmEntry]:
         return dict(self._entries)
@@ -285,13 +298,100 @@ class BaseAlgorithmRegistry:
 
     def _validate_config(self, command: ParsedCommand) -> None:
         args = command.args
+        obs = getattr(args, "obs", None)
+        obs_groups = getattr(args, "obs_groups", None)
+        if obs is not None and obs_groups is not None:
+            expected_keys = set(obs.expected_keys)
+            for group_name in ("actor", "critic"):
+                group_keys = getattr(obs_groups, group_name, None)
+                if group_keys is None:
+                    continue
+                unknown = sorted(set(group_keys) - expected_keys)
+                if unknown:
+                    raise ConfigError(
+                        f"--obs-groups.{group_name} has key(s) {unknown} not in "
+                        f"--obs's expected keys {sorted(expected_keys)}."
+                    )
+        # encoder_sharing preflight: the same resolve_encoder_sharing rule
+        # ObservationEncoderMixin._resolve_encoder_sharing applies at
+        # algorithm-construction time (rl_garden/algorithms/_observation.py),
+        # so a config never needs to spell out `--encoder-sharing separate`
+        # when it is already implied by asymmetric --obs-groups or a
+        # distinct --critic-encoder. Runs for every algorithm exposing
+        # `encoder_sharing` on its args -- independent of whether obs_groups
+        # was actually given -- so --print-config always shows the resolved
+        # value and its origin. Statically checkable (no agent instantiation)
+        # only for algorithms that registered an `algorithm_cls` factory
+        # (AlgorithmEntry); algorithms without one defer the mismatch to
+        # agent-construction time, the same documented gap as before.
+        if hasattr(args, "encoder_sharing"):
+            if obs is not None and obs_groups is not None:
+                expected_keys = set(obs.expected_keys)
+                actor_keys = (
+                    set(obs_groups.actor) if obs_groups.actor is not None else expected_keys
+                )
+                critic_keys = (
+                    set(obs_groups.critic) if obs_groups.critic is not None else expected_keys
+                )
+                asymmetric = actor_keys != critic_keys
+            else:
+                asymmetric = False
+            has_critic_encoder = resolve_critic_encoder_config(args) is not None
+            entry = self._entries.get(command.algorithm)
+            algorithm_cls = (
+                entry.algorithm_cls() if entry is not None and entry.algorithm_cls else None
+            )
+            if algorithm_cls is not None:
+                requested = args.encoder_sharing
+                class_default = getattr(algorithm_cls, "encoder_sharing", "shared_critic_grad")
+                try:
+                    value, origin = resolve_encoder_sharing(
+                        requested=requested,
+                        class_default=class_default,
+                        asymmetric=asymmetric,
+                        has_critic_encoder=has_critic_encoder,
+                    )
+                except ObservationContractError as exc:
+                    raise ConfigError(str(exc)) from exc
+                choices = getattr(
+                    algorithm_cls,
+                    "encoder_sharing_choices",
+                    ("shared_critic_grad", "shared", "separate"),
+                )
+                if value not in choices:
+                    raise ConfigError(
+                        f"{command.algorithm}'s encoder_sharing resolved to "
+                        f"{value!r} (via {origin}), but this algorithm only "
+                        f"supports {choices}; make --obs-groups symmetric / "
+                        "drop --critic-encoder, or pass an explicit "
+                        "--encoder-sharing value from that set."
+                    )
+                if value != requested:
+                    args.encoder_sharing = value
+                    command.derived["encoder_sharing"] = {
+                        "before": json_value(requested),
+                        "after": json_value(value),
+                        "reason": origin,
+                    }
+                    override_sources(
+                        command.sources,
+                        {"encoder_sharing"},
+                        kind="runtime-derived",
+                        detail=origin,
+                    )
         if self.phase_name == "offline":
             if command.algorithm == "tdmpc2_multitask":
                 if not getattr(args, "dataset_dir", None):
                     raise ConfigError("--dataset_dir is required for tdmpc2_multitask.")
                 if not getattr(args, "mmap_dir", None):
                     raise ConfigError("--mmap_dir is required for tdmpc2_multitask.")
-            elif command.algorithm in ("diffusion_bc", "vision_diffusion_bc", "a2a_bc", "hilp", "opal"):
+            elif command.algorithm in (
+                "diffusion_bc",
+                "consistency_distill_bc",
+                "a2a_bc",
+                "hilp",
+                "opal",
+            ):
                 if not getattr(args, "dataset_path", None):
                     raise ConfigError(f"--dataset_path is required for {command.algorithm}.")
             elif not getattr(args, "offline_dataset", None):

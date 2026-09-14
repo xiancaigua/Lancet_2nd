@@ -6,12 +6,11 @@ offline data into ``agent.replay_buffer``, run offline gradient steps,
 ``switch_to_online_mode``, continue via ``learn()``), so only a
 ``build_acfql`` callback is needed here, matching ``wsrl.py``'s shape.
 
-State observations only -- ``ChunkedTensorReplayBuffer`` is Box-only for v1.
-``run_off2on``'s shared runner reads ``args.obs_mode`` unconditionally to
-build the ``EnvRequest`` (unlike ``run_online``, it has no per-algorithm
-``make_env_request`` callback), so ``obs_mode`` is still a real field on
-``ACFQLArgs`` -- just fixed to ``"state"`` rather than exposed as a
-vision-capable knob.
+State-only observations by default; pass ``--obs.rgb <camera>`` for
+CNN-based Dict/RGBD observations (``ChunkedReplayBuffer``, via
+``ACFQLCore._build_replay_buffer``). ``run_off2on``'s shared runner reads
+``args.obs`` unconditionally to build the ``EnvRequest`` (unlike
+``run_online``, it has no per-algorithm ``make_env_request`` callback).
 
 ``ACFQLArgs`` extends ``Off2OnCommonArgs`` for the orchestration fields
 ``run_off2on`` reads directly (``num_offline_steps``, ``online_replay_mode``,
@@ -30,12 +29,22 @@ from __future__ import annotations
 
 def build_acfql(args, env, eval_env, logger, checkpoint_dir):
     from rl_garden.algorithms import ACFQL
+    from rl_garden.common.cli_args import resolve_critic_encoder_config, resolve_obs_groups_config
     from rl_garden.training.inspection import construct_agent
+
+    image_kwargs: dict = {
+        "encoder_config": args.encoder if args.obs.is_visual else None,
+        "obs_groups": resolve_obs_groups_config(args),
+        "critic_encoder_config": resolve_critic_encoder_config(args),
+    }
+    if args.encoder_sharing is not None:
+        image_kwargs["encoder_sharing"] = args.encoder_sharing
 
     agent = construct_agent(
         ACFQL,
         env=env,
         eval_env=eval_env,
+        **image_kwargs,
         horizon_length=args.horizon_length,
         actor_type=args.actor_type,
         actor_num_samples=args.actor_num_samples,
@@ -68,7 +77,6 @@ def build_acfql(args, env, eval_env, logger, checkpoint_dir):
         kernel_init=args.kernel_init,
         backbone_type=args.backbone_type,
         activation_fn=args.activation_fn,
-        encoder_sharing=args.encoder_sharing,
         offline_sampling=args.offline_sampling,
         seed=args.seed,
         logger=logger,
@@ -99,25 +107,21 @@ def run_acfql(args: "ACFQLArgs") -> None:
 from dataclasses import dataclass  # noqa: E402
 from typing import Literal, Optional  # noqa: E402
 
+from rl_garden.common.cli_args import ObservationArgs  # noqa: E402
 from rl_garden.common.env_args import EnvBackendArgs  # noqa: E402
 from rl_garden.networks import Activation, KernelInit  # noqa: E402
-from rl_garden.policies.acfql_policy import ActorType, EncoderSharing  # noqa: E402
+from rl_garden.policies.acfql_policy import ActorType  # noqa: E402
 from rl_garden.training.off2on._args import Off2OnCommonArgs  # noqa: E402
 from rl_garden.training.off2on._registry import registry  # noqa: E402
 
 
 @dataclass
-class ACFQLArgs(Off2OnCommonArgs, EnvBackendArgs):
+class ACFQLArgs(Off2OnCommonArgs, ObservationArgs, EnvBackendArgs):
     """ACFQL -- Q-chunking's action-chunked, offline-to-online FQL (Li, Zhou,
-    Levine 2025, ``3rd_party/qc/agents/acfql.py``). State observations only.
+    Levine 2025, ``3rd_party/qc/agents/acfql.py``). State-only observations
+    by default; pass ``--obs.rgb <camera>`` for CNN-based Dict/RGBD
+    observations.
     """
-
-    # run_off2on's shared runner (_runner.py) reads args.obs_mode
-    # unconditionally to build the EnvRequest -- unlike run_online, it has no
-    # per-algorithm make_env_request callback to hide this behind. Fixed to
-    # "state": ACFQLCore is Box-only (raises TypeError on Dict obs downstream
-    # if overridden), so this isn't exposed as a real vision-capable knob.
-    obs_mode: str = "state"
 
     horizon_length: int = 5
     actor_type: ActorType = "distill-ddpg"
@@ -129,7 +133,6 @@ class ACFQLArgs(Off2OnCommonArgs, EnvBackendArgs):
     hidden_dim: int = 512
     hidden_layers: int = 4
     activation_fn: Optional[Activation] = "gelu"
-    encoder_sharing: EncoderSharing = "shared"
     actor_lr: float = 3e-4
     critic_lr: float = 3e-4
 
@@ -138,4 +141,11 @@ class ACFQLArgs(Off2OnCommonArgs, EnvBackendArgs):
     kernel_init: Optional[KernelInit] = "xavier_uniform"
 
 
-registry.register("acfql", ACFQLArgs, run_acfql)
+
+
+def _acfql_algorithm_cls() -> type:
+    from rl_garden.algorithms import ACFQL
+
+    return ACFQL
+
+registry.register("acfql", ACFQLArgs, run_acfql, algorithm_cls=_acfql_algorithm_cls)

@@ -10,19 +10,17 @@ explicit-optimizer-ownership rule directly: ``discrete_critic`` and
 """
 from __future__ import annotations
 
-from typing import Any, Optional, Sequence
+from typing import Any, Optional
 
 import torch
 import torch.nn.functional as F
-from gymnasium import spaces
 
 from rl_garden.algorithms.rlpd import RLPD
 from rl_garden.buffers.demo_intervention import DemoInterventionMixin
-from rl_garden.buffers.dict_buffer import DictReplayBuffer
-from rl_garden.buffers.memory_efficient_dict_buffer import MemoryEfficientDictReplayBuffer
+from rl_garden.buffers.replay_buffer import ReplayBuffer
+from rl_garden.buffers.memory_efficient_buffer import MemoryEfficientReplayBuffer
 from rl_garden.common.optim import make_optimizer
 from rl_garden.common.utils import polyak_update
-from rl_garden.encoders.base import BaseFeaturesExtractor
 from rl_garden.policies.rlpd_hybrid_policy import _DISCRETE_ACTION_VALUES, RLPDHybridPolicy
 
 
@@ -47,7 +45,6 @@ class RLPDHybrid(DemoInterventionMixin, RLPD):
         discrete_tau: Optional[float] = None,
         use_grasp_penalty: bool = False,
         memory_efficient_buffer: bool = False,
-        memory_efficient_image_keys: Sequence[str] = (),
         memory_efficient_frame_stack: int = 1,
         **rlpd_kwargs: Any,
     ) -> None:
@@ -56,17 +53,15 @@ class RLPDHybrid(DemoInterventionMixin, RLPD):
         self._discrete_tau = discrete_tau
         self.use_grasp_penalty = use_grasp_penalty
         self.memory_efficient_buffer = memory_efficient_buffer
-        self.memory_efficient_image_keys = tuple(memory_efficient_image_keys)
         self.memory_efficient_frame_stack = memory_efficient_frame_stack
         super().__init__(env, eval_env, **rlpd_kwargs)
         if self.use_grasp_penalty:
             self._extra_batch_slice_keys = (*self._extra_batch_slice_keys, "grasp_penalty")
 
-    def _build_policy(self, features_extractor: BaseFeaturesExtractor) -> RLPDHybridPolicy:
+    def _build_policy(self) -> RLPDHybridPolicy:
         return RLPDHybridPolicy(
             observation_space=self.env.single_observation_space,
             action_space=self._policy_action_space(),
-            features_extractor=features_extractor,
             net_arch=self.net_arch,
             n_critics=self.n_critics,
             critic_subsample_size=self.critic_subsample_size,
@@ -83,27 +78,32 @@ class RLPDHybrid(DemoInterventionMixin, RLPD):
             actor_feature_dim=self.actor_feature_dim,
             critic_spatial_emb_dim=self.critic_spatial_emb_dim,
             discrete_hidden_dims=(self.discrete_hidden_dim,),
-            critic_features_extractor=self._build_critic_features_extractor(),
             critic_backbone_type=self.critic_backbone_type,
+            **self._policy_extractor_kwargs(
+                self.env.single_observation_space,
+                augmentation_seed=self._image_augmentation_seed,
+            ),
         )
 
     def _build_replay_buffer(self):
         if not self.use_grasp_penalty and not self.memory_efficient_buffer:
             return super()._build_replay_buffer()
+        # obs_space is always Dict (boundary normalization is unconditional),
+        # so only nstep == 1 remains to check here.
         obs_space = self.env.single_observation_space
-        if not isinstance(obs_space, spaces.Dict) or self.nstep > 1:
+        if self.nstep > 1:
             raise ValueError(
-                "use_grasp_penalty/memory_efficient_buffer require a Dict "
-                "observation space and nstep == 1 (no NStepDictReplayBuffer "
-                "grasp_penalty column or dedup support this round)."
+                "use_grasp_penalty/memory_efficient_buffer require nstep == "
+                "1 (no NStepReplayBuffer grasp_penalty column or dedup "
+                "support this round)."
             )
         if self.memory_efficient_buffer:
-            return MemoryEfficientDictReplayBuffer(
+            return MemoryEfficientReplayBuffer(
                 observation_space=obs_space,
                 action_space=self.env.single_action_space,
                 num_envs=self.num_envs,
                 buffer_size=self.buffer_size,
-                image_keys=self.memory_efficient_image_keys,
+                image_keys=self.observation_encoders.schema.image_keys,
                 frame_stack=self.memory_efficient_frame_stack,
                 storage_device=self.buffer_device,
                 sample_device=self.device,
@@ -111,7 +111,7 @@ class RLPDHybrid(DemoInterventionMixin, RLPD):
                 mmap_dir=self.mmap_dir,
                 mmap_mode=self.mmap_mode,
             )
-        return DictReplayBuffer(
+        return ReplayBuffer(
             observation_space=obs_space,
             action_space=self.env.single_action_space,
             num_envs=self.num_envs,

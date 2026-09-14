@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import Literal, Optional
 import warnings
 
-from rl_garden.common.cli_args import CheckpointArgs, VisionArgs
+from rl_garden.common.cli_args import CheckpointArgs, ObservationArgs
 from rl_garden.common.env_args import EnvRunArgs
 from rl_garden.common.training_phase import InitialTrainingPhase
 from rl_garden.training.offline._args import OfflineIQLArgs, OfflineValueArgs
@@ -125,6 +125,13 @@ class CQLOff2OnArgs:
     sparse_reward_mc: bool = False
     sparse_negative_reward: float = 0.0
     success_threshold: float = 0.5
+    # SARSA/FQE reference-value network (Cal-QL's fix for continuing tasks,
+    # e.g. D4RL locomotion, where MC return-to-go is truncation-biased).
+    # Opt-in only -- default reproduces today's MC-return-based behavior
+    # exactly. See rl_garden/algorithms/calql.py:CalQLCore.
+    use_sarsa_reference: bool = False
+    sarsa_hidden_dims: tuple[int, ...] = (256, 256)
+    sarsa_lr: float = 3e-4
 
 
 @dataclass
@@ -133,9 +140,7 @@ class WSRLTrainingArgs(Off2OnCommonArgs, CQLOff2OnArgs):
 
 
 @dataclass
-class VisionWSRLTrainingArgs(WSRLTrainingArgs, VisionArgs):
-    camera_width: Optional[int] = 128
-    camera_height: Optional[int] = 128
+class VisionWSRLTrainingArgs(WSRLTrainingArgs, ObservationArgs):
     buffer_size: int = 200_000
     batch_size: int = 512
     utd: float = 0.25
@@ -148,9 +153,7 @@ class IQLOff2OnTrainingArgs(Off2OnCommonArgs, OfflineIQLArgs, OfflineValueArgs):
 
 
 @dataclass
-class VisionIQLOff2OnTrainingArgs(IQLOff2OnTrainingArgs, VisionArgs):
-    camera_width: Optional[int] = 128
-    camera_height: Optional[int] = 128
+class VisionIQLOff2OnTrainingArgs(IQLOff2OnTrainingArgs, ObservationArgs):
     buffer_size: int = 200_000
     batch_size: int = 512
     utd: float = 0.25
@@ -170,8 +173,8 @@ class AWACOff2OnHyperparamArgs:
 class AWACOff2OnTrainingArgs(Off2OnCommonArgs, AWACOff2OnHyperparamArgs):
     """AWAC off2on args: ``Off2OnCommonArgs`` + AWAC-specific hyperparameters.
 
-    AWAC is Box-observation only (no vision variant); pass ``--obs_mode state``
-    (the ``EnvRunArgs`` default is ``rgb``).
+    AWAC is Box-observation only: no ``ObservationArgs`` mixed in, so it has
+    no ``--obs``/``--encoder`` CLI surface at all.
     """
 
 
@@ -202,8 +205,11 @@ class SPOTOff2OnHyperparamArgs:
 class SPOTOff2OnTrainingArgs(Off2OnCommonArgs, SPOTOff2OnHyperparamArgs):
     """SPOT off2on args: ``Off2OnCommonArgs`` + SPOT-specific hyperparameters.
 
-    SPOT is Box-observation only (no vision variant); pass ``--obs_mode state``
-    (the ``EnvRunArgs`` default is ``rgb``).
+    This class alone has no ``--obs``/``--encoder`` CLI surface;
+    ``SPOTOff2OnArgs`` (``rl_garden/training/off2on/spot.py``) mixes in
+    ``ObservationArgs`` separately, so SPOT does accept Box or Dict
+    (vision) observations, ``obs_groups``, and ``critic_encoder``/
+    ``encoder_sharing`` at the CLI.
     """
 
 
@@ -225,8 +231,8 @@ class SO2Off2OnHyperparamArgs:
 class SO2Off2OnTrainingArgs(Off2OnCommonArgs, SO2Off2OnHyperparamArgs):
     """SO2 off2on args: ``Off2OnCommonArgs`` + SO2-specific hyperparameters.
 
-    SO2 is Box-observation only (no vision variant); pass ``--obs_mode state``
-    (the ``EnvRunArgs`` default is ``rgb``). Overrides two ``Off2OnCommonArgs``
+    SO2 is Box-observation only: no ``ObservationArgs`` mixed in, so it has
+    no ``--obs``/``--encoder`` CLI surface at all. Overrides two ``Off2OnCommonArgs``
     defaults to match upstream's plain-MLP critic ensemble with a
     full-ensemble (not REDQ-style subsampled) min target: ``critic_subsample_size``
     (``None`` -- min over the entire ensemble) and ``actor_use_layer_norm``/

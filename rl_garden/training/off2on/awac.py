@@ -3,13 +3,12 @@
 Builds ``Off2OnAWAC`` and reuses the same ``_runner.run_off2on`` orchestration
 as ``iql``/``wsrl``/``calql``. AWAC needs no online-switch override, so this
 preset mirrors ``Off2OnIQL``'s (no warmup, mixed replay retained by default).
-Box observations only -- pass ``--obs_mode state`` (the ``EnvRunArgs``
-default is ``rgb``).
 """
 
 from dataclasses import dataclass
 from typing import Literal
 
+from rl_garden.common.cli_args import ObservationArgs
 from rl_garden.common.env_args import EnvBackendArgs
 from rl_garden.training.off2on._args import (
     AWACOff2OnTrainingArgs,
@@ -19,10 +18,11 @@ from rl_garden.training.off2on._registry import registry
 
 
 @dataclass
-class AWACOff2OnArgs(AWACOff2OnTrainingArgs, EnvBackendArgs):
+class AWACOff2OnArgs(AWACOff2OnTrainingArgs, ObservationArgs, EnvBackendArgs):
     """AWAC off2on args: no warmup, mixed replay, adaptive ratio.
 
-    Box observations only; pass ``--obs_mode state``.
+    State-only observations by default; pass ``--obs.rgb <camera>`` for
+    Dict/RGBD observations.
     """
 
     warmup_steps: int = 0
@@ -31,8 +31,25 @@ class AWACOff2OnArgs(AWACOff2OnTrainingArgs, EnvBackendArgs):
 
 
 def build_awac(args: AWACOff2OnArgs, env, eval_env, logger, checkpoint_dir):
+    from rl_garden.common.cli_args import (
+        resolve_critic_encoder_config,
+        resolve_obs_groups_config,
+    )
     from rl_garden.algorithms import Off2OnAWAC
     from rl_garden.training.inspection import construct_agent
+
+    # AWAC only supports state observations (no images) -- see
+    # AWACCore._setup_model's own ObservationContractError guard. It does
+    # support a distinct critic encoder/encoder_sharing (state_<name> keys
+    # are STATE modality, not images, so an asymmetric privileged-critic
+    # state key is still allowed).
+    image_kwargs: dict = {
+        "encoder_config": args.encoder if args.obs.is_visual else None,
+        "obs_groups": resolve_obs_groups_config(args),
+        "critic_encoder_config": resolve_critic_encoder_config(args),
+    }
+    if args.encoder_sharing is not None:
+        image_kwargs["encoder_sharing"] = args.encoder_sharing
 
     agent = construct_agent(
         Off2OnAWAC,
@@ -79,6 +96,7 @@ def build_awac(args: AWACOff2OnArgs, env, eval_env, logger, checkpoint_dir):
         checkpoint_freq=args.checkpoint_freq,
         save_replay_buffer=args.save_replay_buffer,
         save_final_checkpoint=args.save_final_checkpoint,
+        **image_kwargs,
     )
     if args.load_checkpoint is not None:
         agent.load(args.load_checkpoint, load_replay_buffer=args.load_replay_buffer)
@@ -91,4 +109,11 @@ def run_awac(args: AWACOff2OnArgs) -> None:
     run_off2on(args, build_agent=build_awac, algorithm="awac")
 
 
-registry.register("awac", AWACOff2OnArgs, run_awac)
+
+
+def _off2_on_awac_algorithm_cls() -> type:
+    from rl_garden.algorithms import Off2OnAWAC
+
+    return Off2OnAWAC
+
+registry.register("awac", AWACOff2OnArgs, run_awac, algorithm_cls=_off2_on_awac_algorithm_cls)

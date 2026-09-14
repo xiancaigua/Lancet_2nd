@@ -1,5 +1,5 @@
 """Opt-in heterogeneous actor/critic encoders: default path stays shared and
-byte-identical; a separate critic_features_extractor is correctly isolated
+byte-identical; a separate critic_extractor is correctly isolated
 to the right optimizer/gradient path in both SAC-family and PPO-family."""
 from __future__ import annotations
 
@@ -11,7 +11,9 @@ from gymnasium import spaces
 from rl_garden.algorithms import SAC
 from rl_garden.common.training_phase import InitialTrainingPhase
 from rl_garden.encoders import BaseFeaturesExtractor, CombinedExtractor
+from rl_garden.encoders.config import EncoderConfig
 from rl_garden.networks.recurrent import RecurrentLatentEncoder
+from rl_garden.observations import ObservationSchema
 from rl_garden.policies.ppo_policy import PPOPolicy
 from rl_garden.policies.recurrent_ppo_policy import RecurrentPPOPolicy
 from rl_garden.policies.recurrent_sac_policy import RecurrentSACPolicy
@@ -53,7 +55,7 @@ class _TrainableDictExtractor(BaseFeaturesExtractor):
 
     def forward(self, obs):
         state = obs["state"].float()
-        rgb = obs["rgb"].float().mean(dim=(1, 2)) / 255.0
+        rgb = obs["rgb_cam"].float().mean(dim=(1, 2)) / 255.0
         return torch.tanh(self.state_proj(state) + self.rgb_proj(rgb))
 
 
@@ -69,7 +71,7 @@ class _TrainableBoxExtractor(BaseFeaturesExtractor):
 def _dict_env() -> DummyVecEnv:
     obs_space = spaces.Dict(
         {
-            "rgb": spaces.Box(low=0, high=255, shape=(64, 64, 3), dtype=np.uint8),
+            "rgb_cam": spaces.Box(low=0, high=255, shape=(64, 64, 3), dtype=np.uint8),
             "state": spaces.Box(low=-1.0, high=1.0, shape=(4,), dtype=np.float32),
         }
     )
@@ -81,11 +83,11 @@ def _fill_dict(agent, steps: int = 8) -> None:
     env = agent.env
     for _ in range(steps):
         obs = {
-            "rgb": torch.randint(0, 256, (env.num_envs, 64, 64, 3), dtype=torch.uint8),
+            "rgb_cam": torch.randint(0, 256, (env.num_envs, 64, 64, 3), dtype=torch.uint8),
             "state": torch.randn(env.num_envs, 4),
         }
         next_obs = {
-            "rgb": torch.randint(0, 256, (env.num_envs, 64, 64, 3), dtype=torch.uint8),
+            "rgb_cam": torch.randint(0, 256, (env.num_envs, 64, 64, 3), dtype=torch.uint8),
             "state": torch.randn(env.num_envs, 4),
         }
         actions = torch.randn(env.num_envs, *env.single_action_space.shape).clamp(-1, 1)
@@ -113,8 +115,7 @@ def _dict_agent(**kwargs) -> SAC:
         "training_freq": 1,
         "eval_freq": 0,
         "net_arch": {"pi": [16], "qf": [16]},
-        "image_keys": ("rgb",),
-        "proprio_latent_dim": 4,
+        "encoder_config": EncoderConfig(proprio_latent_dim=4),
     }
     params.update(kwargs)
     return SAC(env=_dict_env(), **params)
@@ -122,8 +123,8 @@ def _dict_agent(**kwargs) -> SAC:
 
 def _separate_critic_policy_kwargs(dim: int = 9) -> dict:
     return {
-        "critic_features_extractor_class": _TrainableDictExtractor,
-        "critic_features_extractor_kwargs": {"features_dim": dim, "marker": "critic"},
+        "critic_extractor_class": _TrainableDictExtractor,
+        "critic_extractor_kwargs": {"features_dim": dim, "marker": "critic"},
     }
 
 
@@ -132,13 +133,17 @@ def _separate_critic_policy_kwargs(dim: int = 9) -> dict:
 
 def test_default_path_critic_extractor_is_same_object_as_actor():
     agent = _dict_agent()
-    assert agent.policy.critic_features_extractor is agent.policy.features_extractor
+    # critic_extractor=None is the new "shared" sentinel (BasePolicy falls
+    # back to actor_extractor for the critic role); it is no longer a second
+    # reference to the same object -- see rl_garden/policies/base.py.
+    assert agent.policy.critic_extractor is None
+    assert agent.policy.critic_features_dim == agent.policy.actor_features_dim
 
 
 def test_default_path_actor_parameters_excludes_shared_encoder():
     agent = _dict_agent()
     actor_param_ids = {id(p) for p in agent.policy.actor_parameters()}
-    encoder_param_ids = {id(p) for p in agent.policy.features_extractor.parameters()}
+    encoder_param_ids = {id(p) for p in agent.policy.actor_extractor.parameters()}
     assert not (actor_param_ids & encoder_param_ids)
 
 
@@ -155,16 +160,16 @@ def test_separate_critic_extractor_updates_only_under_critic_loss():
     agent._start_initial_training_phase()
     _fill_dict(agent)
 
-    assert isinstance(agent.policy.critic_features_extractor, _TrainableDictExtractor)
-    assert agent.policy.critic_features_extractor is not agent.policy.features_extractor
+    assert isinstance(agent.policy.critic_extractor, _TrainableDictExtractor)
+    assert agent.policy.critic_extractor is not agent.policy.actor_extractor
 
-    actor_encoder_before = _clone_params(agent.policy.features_extractor)
-    critic_encoder_before = _clone_params(agent.policy.critic_features_extractor)
+    actor_encoder_before = _clone_params(agent.policy.actor_extractor)
+    critic_encoder_before = _clone_params(agent.policy.critic_extractor)
 
     agent.train(gradient_steps=1, compute_info=True)
 
-    assert not _params_changed(actor_encoder_before, agent.policy.features_extractor)
-    assert _params_changed(critic_encoder_before, agent.policy.critic_features_extractor)
+    assert not _params_changed(actor_encoder_before, agent.policy.actor_extractor)
+    assert _params_changed(critic_encoder_before, agent.policy.critic_extractor)
 
 
 def test_separate_actor_encoder_trains_via_actor_loss_when_not_shared():
@@ -177,17 +182,17 @@ def test_separate_actor_encoder_trains_via_actor_loss_when_not_shared():
     agent._start_initial_training_phase()
     _fill_dict(agent)
 
-    actor_encoder_before = _clone_params(agent.policy.features_extractor)
-    critic_encoder_before = _clone_params(agent.policy.critic_features_extractor)
+    actor_encoder_before = _clone_params(agent.policy.actor_extractor)
+    critic_encoder_before = _clone_params(agent.policy.critic_extractor)
 
     agent.train(gradient_steps=1, compute_info=True)
 
     # Actor's own (non-shared) encoder is actor-exclusive: nothing else
     # trains it, so the actor loss must reach it despite RGBD's default
     # detach-on-actor convention (which only applies when the encoder is
-    # shared with the critic) -- see SAC._actor_stop_gradient.
-    assert _params_changed(actor_encoder_before, agent.policy.features_extractor)
-    assert not _params_changed(critic_encoder_before, agent.policy.critic_features_extractor)
+    # shared with the critic) -- see BasePolicy.extract_actor_features.
+    assert _params_changed(actor_encoder_before, agent.policy.actor_extractor)
+    assert not _params_changed(critic_encoder_before, agent.policy.critic_extractor)
 
 
 def test_shared_encoder_still_detaches_actor_loss_gradient():
@@ -201,9 +206,9 @@ def test_shared_encoder_still_detaches_actor_loss_gradient():
     agent._start_initial_training_phase()
     _fill_dict(agent)
 
-    encoder_before = _clone_params(agent.policy.features_extractor)
+    encoder_before = _clone_params(agent.policy.actor_extractor)
     agent.train(gradient_steps=1, compute_info=True)
-    assert not _params_changed(encoder_before, agent.policy.features_extractor)
+    assert not _params_changed(encoder_before, agent.policy.actor_extractor)
 
 
 # --- separate critic extractor: PPO gating ---
@@ -221,10 +226,10 @@ def test_ppo_policy_separate_critic_extractor_gates_correctly():
     policy = PPOPolicy(
         observation_space=obs_space,
         action_space=act_space,
-        features_extractor=actor_extractor,
-        critic_features_extractor=critic_extractor,
+        actor_extractor=actor_extractor,
+        critic_extractor=critic_extractor,
     )
-    assert policy.critic_features_extractor is not policy.features_extractor
+    assert policy.critic_extractor is not policy.actor_extractor
 
     obs = torch.randn(4, 5)
     actions = torch.randn(4, 2).clamp(-0.9, 0.9)
@@ -246,40 +251,43 @@ def test_ppo_policy_default_path_shares_extractor():
     obs_space = spaces.Box(low=-1.0, high=1.0, shape=(5,), dtype=np.float32)
     act_space = spaces.Box(low=-1.0, high=1.0, shape=(2,), dtype=np.float32)
     extractor = _TrainableBoxExtractor(obs_space, features_dim=6)
-    policy = PPOPolicy(observation_space=obs_space, action_space=act_space, features_extractor=extractor)
-    assert policy.critic_features_extractor is policy.features_extractor
+    policy = PPOPolicy(observation_space=obs_space, action_space=act_space, actor_extractor=extractor)
+    # critic_extractor=None is the new "shared" sentinel -- see
+    # test_default_path_critic_extractor_is_same_object_as_actor above.
+    assert policy.critic_extractor is None
+    assert policy.critic_features_dim == policy.actor_features_dim
 
 
 # --- recurrent policies: explicit unsupported ---
 
 
-def test_recurrent_sac_policy_rejects_critic_features_extractor():
+def test_recurrent_sac_policy_rejects_critic_extractor():
     obs_space = spaces.Box(low=-1.0, high=1.0, shape=(4,), dtype=np.float32)
     act_space = spaces.Box(low=-1.0, high=1.0, shape=(2,), dtype=np.float32)
     extractor = RecordingExtractor(obs_space, features_dim=8)
     recurrent_encoder = RecurrentLatentEncoder(input_dim=8, hidden_size=8)
-    with pytest.raises(ValueError, match="critic_features_extractor"):
+    with pytest.raises(ValueError, match="critic_extractor"):
         RecurrentSACPolicy(
             observation_space=obs_space,
             action_space=act_space,
-            features_extractor=extractor,
+            actor_extractor=extractor,
             recurrent_encoder=recurrent_encoder,
-            critic_features_extractor=RecordingExtractor(obs_space, features_dim=8),
+            critic_extractor=RecordingExtractor(obs_space, features_dim=8),
         )
 
 
-def test_recurrent_ppo_policy_rejects_critic_features_extractor():
+def test_recurrent_ppo_policy_rejects_critic_extractor():
     obs_space = spaces.Box(low=-1.0, high=1.0, shape=(4,), dtype=np.float32)
     act_space = spaces.Box(low=-1.0, high=1.0, shape=(2,), dtype=np.float32)
     extractor = RecordingExtractor(obs_space, features_dim=8)
     recurrent_encoder = RecurrentLatentEncoder(input_dim=8, hidden_size=8)
-    with pytest.raises(ValueError, match="critic_features_extractor"):
+    with pytest.raises(ValueError, match="critic_extractor"):
         RecurrentPPOPolicy(
             observation_space=obs_space,
             action_space=act_space,
-            features_extractor=extractor,
+            actor_extractor=extractor,
             recurrent_encoder=recurrent_encoder,
-            critic_features_extractor=RecordingExtractor(obs_space, features_dim=8),
+            critic_extractor=RecordingExtractor(obs_space, features_dim=8),
         )
 
 
@@ -307,7 +315,7 @@ def test_prepare_batch_all_calls_once_when_shared():
     obs_space = _policy_obs_space()
     act_space = spaces.Box(low=-1.0, high=1.0, shape=(2,), dtype=np.float32)
     extractor = _CountingExtractor(obs_space)
-    policy = SACPolicy(observation_space=obs_space, action_space=act_space, features_extractor=extractor)
+    policy = SACPolicy(observation_space=obs_space, action_space=act_space, actor_extractor=extractor)
     policy.prepare_batch_all({"state": torch.zeros(1, 4)})
     assert extractor.calls == 1
 
@@ -320,8 +328,8 @@ def test_prepare_batch_all_calls_both_when_separate():
     policy = SACPolicy(
         observation_space=obs_space,
         action_space=act_space,
-        features_extractor=actor_extractor,
-        critic_features_extractor=critic_extractor,
+        actor_extractor=actor_extractor,
+        critic_extractor=critic_extractor,
     )
     policy.prepare_batch_all({"state": torch.zeros(1, 4)})
     assert actor_extractor.calls == 1
@@ -331,20 +339,18 @@ def test_prepare_batch_all_calls_both_when_separate():
 def test_combined_extractor_augmentation_cache_keys_are_instance_scoped():
     obs_space = spaces.Dict(
         {
-            "rgb": spaces.Box(low=0, high=255, shape=(64, 64, 3), dtype=np.uint8),
+            "rgb_cam": spaces.Box(low=0, high=255, shape=(64, 64, 3), dtype=np.uint8),
             "state": spaces.Box(low=-1.0, high=1.0, shape=(4,), dtype=np.float32),
         }
     )
-    actor_extractor = CombinedExtractor(
-        obs_space, image_keys=("rgb",), image_augmentation="random_shift", augmentation_seed=1
-    )
-    critic_extractor = CombinedExtractor(
-        obs_space, image_keys=("rgb",), image_augmentation="random_shift", augmentation_seed=2
-    )
+    schema = ObservationSchema.from_space(obs_space)
+    encoder_config = EncoderConfig(image_augmentation="random_shift")
+    actor_extractor = CombinedExtractor(obs_space, schema, encoder_config, augmentation_seed=1)
+    critic_extractor = CombinedExtractor(obs_space, schema, encoder_config, augmentation_seed=2)
     assert actor_extractor._aug_stack_key != critic_extractor._aug_stack_key
 
     obs = {
-        "rgb": torch.randint(0, 256, (2, 64, 64, 3), dtype=torch.uint8),
+        "rgb_cam": torch.randint(0, 256, (2, 64, 64, 3), dtype=torch.uint8),
         "state": torch.randn(2, 4),
     }
     actor_extractor.prepare_batch(obs)
@@ -367,8 +373,8 @@ def test_rlpd_hybrid_discrete_critic_sized_from_critic_extractor():
     policy = RLPDHybridPolicy(
         observation_space=obs_space,
         action_space=act_space,
-        features_extractor=actor_extractor,
-        critic_features_extractor=critic_extractor,
+        actor_extractor=actor_extractor,
+        critic_extractor=critic_extractor,
     )
     assert policy.discrete_critic.net[0].in_features == 9
 
@@ -379,12 +385,13 @@ def test_rlpd_hybrid_discrete_critic_sized_from_critic_extractor():
 def test_separate_critic_extractor_drops_unrequested_image_key():
     obs_space = spaces.Dict(
         {
-            "rgb": spaces.Box(low=0, high=255, shape=(64, 64, 3), dtype=np.uint8),
-            "depth": spaces.Box(low=0.0, high=1.0, shape=(64, 64, 1), dtype=np.float32),
+            "rgb_cam": spaces.Box(low=0, high=255, shape=(64, 64, 3), dtype=np.uint8),
+            "depth_cam": spaces.Box(low=0.0, high=1.0, shape=(64, 64, 1), dtype=np.float32),
             "state": spaces.Box(low=-1.0, high=1.0, shape=(4,), dtype=np.float32),
         }
     )
     act_space = spaces.Box(low=-1.0, high=1.0, shape=(2,), dtype=np.float32)
+    critic_schema = ObservationSchema.from_space(obs_space).subset(("rgb_cam", "state"))
     agent = SAC(
         env=DummyVecEnv(obs_space, act_space),
         device="cpu",
@@ -395,31 +402,29 @@ def test_separate_critic_extractor_drops_unrequested_image_key():
         training_freq=1,
         eval_freq=0,
         net_arch={"pi": [16], "qf": [16]},
-        image_keys=("rgb", "depth"),
-        proprio_latent_dim=4,
+        encoder_config=EncoderConfig(proprio_latent_dim=4),
         policy_kwargs={
-            "critic_features_extractor_class": CombinedExtractor,
-            "critic_features_extractor_kwargs": {
-                "image_keys": ("rgb",),
-                "proprio_latent_dim": 4,
+            "critic_extractor_class": CombinedExtractor,
+            "critic_extractor_kwargs": {
+                "schema": critic_schema,
+                "encoder_config": EncoderConfig(proprio_latent_dim=4),
             },
         },
     )
 
-    critic_extractor = agent.policy.critic_features_extractor
+    critic_extractor = agent.policy.critic_extractor
     assert isinstance(critic_extractor, CombinedExtractor)
-    assert critic_extractor.image_keys == ("rgb",)
-    assert "depth" not in critic_extractor.vector_extractors
+    assert critic_extractor.image_keys == ("rgb_cam",)
 
     for _ in range(8):
         obs = {
-            "rgb": torch.randint(0, 256, (1, 64, 64, 3), dtype=torch.uint8),
-            "depth": torch.rand(1, 64, 64, 1),
+            "rgb_cam": torch.randint(0, 256, (1, 64, 64, 3), dtype=torch.uint8),
+            "depth_cam": torch.rand(1, 64, 64, 1),
             "state": torch.randn(1, 4),
         }
         next_obs = {
-            "rgb": torch.randint(0, 256, (1, 64, 64, 3), dtype=torch.uint8),
-            "depth": torch.rand(1, 64, 64, 1),
+            "rgb_cam": torch.randint(0, 256, (1, 64, 64, 3), dtype=torch.uint8),
+            "depth_cam": torch.rand(1, 64, 64, 1),
             "state": torch.randn(1, 4),
         }
         actions = torch.randn(1, *act_space.shape).clamp(-1, 1)

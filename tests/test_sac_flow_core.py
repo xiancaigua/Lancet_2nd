@@ -7,8 +7,17 @@ from gymnasium import spaces
 
 from rl_garden.algorithms import SACFlow
 from rl_garden.encoders.base import BaseFeaturesExtractor
+from rl_garden.encoders.config import EncoderConfig
 from rl_garden.networks import FlowMatchingActor
 from rl_garden.policies.sac_flow_policy import SACFlowPolicy
+
+# Small + fast: "gap" pooling (unlike the default "flatten") tolerates tiny
+# images without PlainConv's flatten-layer size mismatch. Mirrors
+# tests/test_fql_core.py's own vision-test image encoder factory.
+_TEST_IMAGE_SIZE = 16
+_test_encoder_config = EncoderConfig(
+    backbone="plain_conv", features_dim=16, plain_conv_pooling="gap"
+)
 
 
 class DummyVecEnv:
@@ -40,7 +49,18 @@ class DummyVecEnv:
         return None
 
     def _obs(self):
-        return torch.randn(self.num_envs, *self.single_observation_space.shape)
+        obs_space = self.single_observation_space
+        if isinstance(obs_space, spaces.Dict):
+            return {
+                "rgb_cam": torch.randint(
+                    0,
+                    256,
+                    (self.num_envs, *obs_space["rgb_cam"].shape),
+                    dtype=torch.uint8,
+                ),
+                "state": torch.randn(self.num_envs, *obs_space["state"].shape),
+            }
+        return torch.randn(self.num_envs, *obs_space.shape)
 
 
 class StructuredFeaturesExtractor(BaseFeaturesExtractor):
@@ -63,6 +83,17 @@ def _state_space() -> spaces.Box:
 
 def _action_space() -> spaces.Box:
     return spaces.Box(low=-1.0, high=1.0, shape=(2,), dtype=np.float32)
+
+
+def _vision_space() -> spaces.Dict:
+    return spaces.Dict(
+        {
+            "rgb_cam": spaces.Box(
+                low=0, high=255, shape=(_TEST_IMAGE_SIZE, _TEST_IMAGE_SIZE, 3), dtype=np.uint8
+            ),
+            "state": spaces.Box(low=-1.0, high=1.0, shape=(4,), dtype=np.float32),
+        }
+    )
 
 
 def _sac_flow_kwargs() -> dict[str, object]:
@@ -104,9 +135,30 @@ def test_sac_flow_rejects_token_and_prop_features():
     with pytest.raises(NotImplementedError):
         SACFlow(
             env=env,
-            policy_kwargs={"features_extractor_class": StructuredFeaturesExtractor},
+            policy_kwargs={"actor_extractor_class": StructuredFeaturesExtractor},
             **_sac_flow_kwargs(),
         )
+
+
+def test_sac_flow_vision_smoke():
+    """Dict/RGBD obs via CombinedExtractor (CNN, not ViT) -- the milestone-1
+    vision path. Mirrors tests/test_fql_core.py's own vision smoke test
+    shape, adapted for SACFlow's online rollout-based construction (no
+    replay-buffer pre-fill needed; ``learn()`` collects real transitions)."""
+    env = DummyVecEnv(_vision_space(), _action_space())
+    agent = SACFlow(env=env, encoder_config=_test_encoder_config, **_sac_flow_kwargs())
+
+    agent.learn(total_timesteps=40)
+
+    assert agent._global_step == 40
+    obs = env._obs()
+    with torch.no_grad():
+        action = agent.policy.predict(obs)
+    assert action.shape == (env.num_envs, 2)
+    low = torch.as_tensor(agent.policy.action_space.low)
+    high = torch.as_tensor(agent.policy.action_space.high)
+    assert torch.all(action >= low - 1e-4)
+    assert torch.all(action <= high + 1e-4)
 
 
 def test_sac_flow_checkpoint_roundtrip(tmp_path):
@@ -117,6 +169,25 @@ def test_sac_flow_checkpoint_roundtrip(tmp_path):
     agent.save(path)
 
     loaded = SACFlow(env=DummyVecEnv(_state_space(), _action_space()), **_sac_flow_kwargs())
+    loaded.load(path)
+
+    assert loaded._global_step == agent._global_step
+    for key, value in agent.policy.state_dict().items():
+        assert torch.equal(value, loaded.policy.state_dict()[key]), key
+
+
+def test_sac_flow_dict_obs_checkpoint_roundtrip_with_encoder_config(tmp_path):
+    env = DummyVecEnv(_vision_space(), _action_space())
+    agent = SACFlow(env=env, encoder_config=_test_encoder_config, **_sac_flow_kwargs())
+    agent.learn(total_timesteps=40)
+    path = tmp_path / "sac_flow_dict.pt"
+    agent.save(path)
+
+    loaded = SACFlow(
+        env=DummyVecEnv(_vision_space(), _action_space()),
+        encoder_config=_test_encoder_config,
+        **_sac_flow_kwargs(),
+    )
     loaded.load(path)
 
     assert loaded._global_step == agent._global_step

@@ -8,8 +8,9 @@ import torch
 from gymnasium import spaces
 
 from rl_garden.algorithms import SAC
-from rl_garden.buffers.dict_buffer import DictReplayBuffer
-from rl_garden.buffers.nstep_buffer import NStepDictReplayBuffer
+from rl_garden.encoders.config import EncoderConfig
+from rl_garden.buffers.replay_buffer import ReplayBuffer
+from rl_garden.buffers.nstep_buffer import NStepReplayBuffer
 from rl_garden.common.checkpoint import checkpoint_dict, save_checkpoint_file
 from rl_garden.common.types import NStepReplayBufferSample
 from rl_garden.common.training_phase import InitialTrainingPhase
@@ -31,7 +32,7 @@ class DummyDictVecEnv:
         self.num_envs = 2
         self.single_observation_space = spaces.Dict(
             {
-                "rgb": spaces.Box(
+                "rgb_cam": spaces.Box(
                     low=0, high=255, shape=(64, 64, 3), dtype=np.uint8
                 ),
                 "state": spaces.Box(
@@ -101,8 +102,7 @@ def _dict_agent(**kwargs) -> SAC:
         "training_freq": 1,
         "eval_freq": 0,
         "net_arch": {"pi": [16], "qf": [16]},
-        "image_keys": ("rgb",),
-        "proprio_latent_dim": 4,
+        "encoder_config": EncoderConfig(proprio_latent_dim=4),
     }
     params.update(kwargs)
     return SAC(
@@ -113,9 +113,15 @@ def _dict_agent(**kwargs) -> SAC:
 
 def _fill(agent: SAC, steps: int = 8) -> None:
     env = agent.env
+    # env.single_observation_space is a Dict({"state": Box}) -- DummyVecEnv's
+    # bare Box space is boundary-normalized by BaseAlgorithm.__init__ (see
+    # rl_garden.envs.wrappers.VectorizedDictStateWrapper) before agent.env is
+    # ever set, matching the Dict obs / Dict replay buffer every algorithm
+    # actually gets now.
+    state_shape = env.single_observation_space["state"].shape
     for _ in range(steps):
-        obs = torch.randn(env.num_envs, *env.single_observation_space.shape)
-        next_obs = torch.randn_like(obs)
+        obs = {"state": torch.randn(env.num_envs, *state_shape)}
+        next_obs = {"state": torch.randn_like(obs["state"])}
         actions = torch.randn(env.num_envs, *env.single_action_space.shape).clamp(-1, 1)
         rewards = torch.randn(env.num_envs)
         dones = torch.zeros(env.num_envs)
@@ -131,7 +137,7 @@ def _fill_dict(agent: SAC, steps: int = 8) -> None:
     env = agent.env
     for _ in range(steps):
         obs = {
-            "rgb": torch.randint(
+            "rgb_cam": torch.randint(
                 0,
                 256,
                 (env.num_envs, 64, 64, 3),
@@ -140,7 +146,7 @@ def _fill_dict(agent: SAC, steps: int = 8) -> None:
             "state": torch.randn(env.num_envs, 4),
         }
         next_obs = {
-            "rgb": torch.randint(
+            "rgb_cam": torch.randint(
                 0,
                 256,
                 (env.num_envs, 64, 64, 3),
@@ -243,15 +249,15 @@ def test_sac_nstep_defaults_to_existing_replay_buffer():
 
     assert agent.nstep == 1
     assert agent._extra_batch_slice_keys == ()
-    assert isinstance(agent.replay_buffer, DictReplayBuffer)
-    assert not isinstance(agent.replay_buffer, NStepDictReplayBuffer)
+    assert isinstance(agent.replay_buffer, ReplayBuffer)
+    assert not isinstance(agent.replay_buffer, NStepReplayBuffer)
 
 
 def test_sac_nstep_uses_buffer_discounts_and_supports_high_utd():
     agent = _dict_agent(nstep=3, gamma=0.8, utd=2.0, batch_size=8)
     _fill_dict(agent)
 
-    assert isinstance(agent.replay_buffer, NStepDictReplayBuffer)
+    assert isinstance(agent.replay_buffer, NStepReplayBuffer)
     assert agent._extra_batch_slice_keys == ("discounts",)
     data = agent.replay_buffer.sample(agent.batch_size)
     assert isinstance(data, NStepReplayBufferSample)
@@ -411,7 +417,7 @@ def test_critic_only_freezes_actor_and_encoder_but_updates_critic():
     _fill_dict(agent)
 
     actor_before = _clone_params(agent.policy.actor)
-    encoder_before = _clone_params(agent.policy.features_extractor)
+    encoder_before = _clone_params(agent.policy.actor_extractor)
     critic_before = _clone_params(agent.policy.critic)
     alpha_before = agent._current_alpha().detach().clone()
 
@@ -419,7 +425,7 @@ def test_critic_only_freezes_actor_and_encoder_but_updates_critic():
 
     assert info["actor_loss"] == 0.0
     assert not _params_changed(actor_before, agent.policy.actor)
-    assert not _params_changed(encoder_before, agent.policy.features_extractor)
+    assert not _params_changed(encoder_before, agent.policy.actor_extractor)
     assert _params_changed(critic_before, agent.policy.critic)
     torch.testing.assert_close(agent._current_alpha(), alpha_before)
 
@@ -437,12 +443,12 @@ def test_critic_only_can_update_encoder():
     _fill_dict(agent)
 
     actor_before = _clone_params(agent.policy.actor)
-    encoder_before = _clone_params(agent.policy.features_extractor)
+    encoder_before = _clone_params(agent.policy.actor_extractor)
 
     agent.train(gradient_steps=1)
 
     assert not _params_changed(actor_before, agent.policy.actor)
-    assert _params_changed(encoder_before, agent.policy.features_extractor)
+    assert _params_changed(encoder_before, agent.policy.actor_extractor)
 
 
 def test_critic_only_high_utd_does_not_update_actor():
@@ -538,7 +544,7 @@ def test_load_actor_checkpoint_transfers_bc_actor_and_encoder(tmp_path):
     agent = _dict_agent()
     source_policy = agent.policy.state_dict()
     for key in list(source_policy):
-        if key.startswith(("features_extractor.", "actor.")):
+        if key.startswith(("actor_extractor.", "actor.")):
             source_policy[key] = torch.ones_like(source_policy[key])
 
     ckpt = checkpoint_dict(
@@ -556,7 +562,7 @@ def test_load_actor_checkpoint_transfers_bc_actor_and_encoder(tmp_path):
 
     loaded = agent.policy.state_dict()
     for key, value in loaded.items():
-        if key.startswith(("features_extractor.", "actor.")):
+        if key.startswith(("actor_extractor.", "actor.")):
             torch.testing.assert_close(value, torch.ones_like(value))
 
 
@@ -645,3 +651,107 @@ def test_q_landscape_diagnostics_preserves_cuda_rng_state():
 
     assert "q_uniform_var" in diagnostics
     torch.testing.assert_close(actual, expected)
+
+
+# --- policy-extractor-contract: asymmetric obs_groups end-to-end (state_<name>) ---
+
+
+class DummyStateExtraVecEnv:
+    """A ``rgb_cam`` + ``state`` + ``state_object_pose`` env: ``rgb_cam``/
+    ``state`` are shared by actor and critic (both get a real, trainable
+    ``CombinedExtractor``); ``state_object_pose`` (Section A's ``state_<name>``
+    family) is critic-only."""
+
+    def __init__(self) -> None:
+        self.num_envs = 2
+        self.single_observation_space = spaces.Dict(
+            {
+                "rgb_cam": spaces.Box(low=0, high=255, shape=(64, 64, 3), dtype=np.uint8),
+                "state": spaces.Box(low=-1.0, high=1.0, shape=(4,), dtype=np.float32),
+                "state_object_pose": spaces.Box(low=-1.0, high=1.0, shape=(3,), dtype=np.float32),
+            }
+        )
+        self.single_action_space = spaces.Box(low=-1.0, high=1.0, shape=(2,), dtype=np.float32)
+
+
+def _fill_state_extra(agent: SAC, steps: int = 8) -> None:
+    env = agent.env
+    for _ in range(steps):
+        obs = {
+            "rgb_cam": torch.randint(0, 256, (env.num_envs, 64, 64, 3), dtype=torch.uint8),
+            "state": torch.randn(env.num_envs, 4),
+            "state_object_pose": torch.randn(env.num_envs, 3),
+        }
+        next_obs = {
+            "rgb_cam": torch.randint(0, 256, (env.num_envs, 64, 64, 3), dtype=torch.uint8),
+            "state": torch.randn(env.num_envs, 4),
+            "state_object_pose": torch.randn(env.num_envs, 3),
+        }
+        actions = torch.randn(env.num_envs, *env.single_action_space.shape).clamp(-1, 1)
+        rewards = torch.randn(env.num_envs)
+        dones = torch.zeros(env.num_envs)
+        agent.replay_buffer.add(obs, next_obs, actions, rewards, dones)
+
+
+def test_sac_asymmetric_obs_groups_critic_sees_extra_state_actor_does_not():
+    """End-to-end asymmetric actor/critic encoders via state_<name>: critic
+    sees state_object_pose, actor does not, encoder_sharing="separate".
+    Asserts the actor extractor's schema lacks the key and, over one real
+    train() step, gradients reach only the right extractor."""
+    from rl_garden.observations import ObsGroups
+
+    agent = SAC(
+        env=DummyStateExtraVecEnv(),
+        device="cpu",
+        buffer_device="cpu",
+        buffer_size=64,
+        batch_size=4,
+        learning_starts=0,
+        training_freq=1,
+        eval_freq=0,
+        net_arch={"pi": [16], "qf": [16]},
+        encoder_config=EncoderConfig(proprio_latent_dim=4),
+        obs_groups=ObsGroups(
+            actor=("rgb_cam", "state"), critic=("rgb_cam", "state", "state_object_pose")
+        ),
+        encoder_sharing="separate",
+    )
+
+    actor_extractor = agent.policy.actor_extractor
+    critic_extractor = agent.policy.critic_extractor
+    assert critic_extractor is not None and critic_extractor is not actor_extractor
+    assert "state_object_pose" not in actor_extractor.state_keys
+    assert "state_object_pose" in critic_extractor.state_keys
+
+    _fill_state_extra(agent)
+    data = agent.replay_buffer.sample(4)
+
+    actor_loss, _ = agent._actor_loss(data.obs)
+    actor_grad_on_actor = torch.autograd.grad(
+        actor_loss, list(actor_extractor.parameters()), retain_graph=True, allow_unused=True
+    )
+    assert any(g is not None and torch.any(g != 0) for g in actor_grad_on_actor)
+    # The actor loss's Q(s, pi(s)) term re-extracts critic-role features with
+    # stop_gradient=True (SACPolicy.critic_features_for); CombinedExtractor's
+    # own stop_gradient convention detaches only the image branch (see
+    # combined.py's _encode_images), so this checks image-branch isolation
+    # specifically, not the whole critic_extractor (its proprio branch
+    # legitimately still requires_grad here -- unrelated to obs_groups).
+    actor_grad_on_critic_image = torch.autograd.grad(
+        actor_loss, list(critic_extractor.image_encoder.parameters()), allow_unused=True
+    )
+    assert all(g is None for g in actor_grad_on_critic_image)
+
+    critic_loss, _ = agent._critic_loss(data)
+    critic_grad_on_critic = torch.autograd.grad(
+        critic_loss, list(critic_extractor.parameters()), retain_graph=True, allow_unused=True
+    )
+    assert any(g is not None and torch.any(g != 0) for g in critic_grad_on_critic)
+    critic_grad_on_actor = torch.autograd.grad(
+        critic_loss, list(actor_extractor.parameters()), allow_unused=True
+    )
+    assert all(g is None for g in critic_grad_on_actor)
+
+    # A real end-to-end rollout+update step also runs cleanly.
+    info = agent.train(gradient_steps=1, compute_info=True)
+    assert info

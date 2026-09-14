@@ -13,10 +13,13 @@ from typing import Any, Literal, Optional, Sequence
 
 import torch
 
+from rl_garden.algorithms._observation import EncoderSharing
 from rl_garden.algorithms.awac import _AWACRolloutTrainingShell
 from rl_garden.common.logger import Logger
+from rl_garden.encoders.config import EncoderConfig
 from rl_garden.networks import KernelInit
 from rl_garden.networks.actor_critic import BackboneType
+from rl_garden.observations import ObsGroups
 
 
 class Off2OnAWAC(_AWACRolloutTrainingShell):
@@ -36,7 +39,7 @@ class Off2OnAWAC(_AWACRolloutTrainingShell):
         gamma: float = 0.99,
         training_freq: int = 64,
         utd: float = 1.0,
-        bootstrap_at_done: str = "always",
+        bootstrap_at_done: str = "truncated",
         offline_sampling: Literal["with_replace", "without_replace"] = "with_replace",
         tau: float = 5e-3,
         actor_lr: float = 3e-4,
@@ -62,6 +65,11 @@ class Off2OnAWAC(_AWACRolloutTrainingShell):
         kernel_init: Optional[KernelInit] = None,
         backbone_type: BackboneType = "mlp",
         std_parameterization: Literal["exp", "uniform"] = "exp",
+        encoder_config: Optional[EncoderConfig] = None,
+        obs_groups: Optional[ObsGroups] = None,
+        critic_encoder_config: Optional[EncoderConfig] = None,
+        encoder_sharing: Optional[EncoderSharing] = None,
+        image_augmentation_seed: Optional[int] = None,
         seed: int = 1,
         device: str | torch.device = "auto",
         logger: Optional[Logger] = None,
@@ -110,6 +118,11 @@ class Off2OnAWAC(_AWACRolloutTrainingShell):
             kernel_init=kernel_init,
             backbone_type=backbone_type,
             std_parameterization=std_parameterization,
+            encoder_config=encoder_config,
+            obs_groups=obs_groups,
+            critic_encoder_config=critic_encoder_config,
+            encoder_sharing=encoder_sharing,
+            image_augmentation_seed=image_augmentation_seed,
             seed=seed,
             device=device,
             logger=logger,

@@ -6,6 +6,26 @@ Ported from ``3rd_party/dppo/agent/pretrain/train_diffusion_agent.py`` +
 maintains an EMA copy; the EMA weights are what ``DPPO`` loads into its
 frozen ``actor``/trainable ``actor_ft`` for PPO fine-tuning.
 
+Handles both Box (state-only) and Dict (vision) observations through the
+schema-driven observation-encoder mixin (``rl_garden.algorithms._observation``,
+see the observation-redesign plan docs) -- this class absorbs the former
+standalone ``VisionDiffusionBC``. ``self._policy_extractor_kwargs()``'s
+``actor_extractor`` is always passed to ``DiffusionPolicy``: a
+``FlattenExtractor`` (no learnable parameters) for a state-only schema, a
+``CombinedExtractor`` for one with images, trained jointly with the
+diffusion net in the same ``actor_optimizer`` (both ``DiffusionBC`` and the
+former ``VisionDiffusionBC`` already trained the whole policy, encoder
+included, in one optimizer). ``ema_net_state_dict`` (``self.ema_policy.net``)
+is unaffected either way -- it never included the features extractor, only
+the denoising network, so ``DPPOPolicy.load_actor_weights`` keeps working
+unmodified. This algorithm has no critic, so ``encoder_sharing`` is fixed to
+``"shared"`` (never exposed as a constructor kwarg -- the encoder is trained
+end-to-end by the actor loss, and ``"shared_critic_grad"`` would otherwise
+stop-gradient it whenever ``critic_extractor is None``, see
+``BasePolicy.extract_actor_features``) and ``critic_encoder_config`` is
+unused (always ``None`` for checkpoint-metadata-shape consistency with every
+other migrated algorithm).
+
 Training is step-based (random mini-batches via ``torch.randint``), not the
 reference's epoch-based ``DataLoader`` loop -- matches every other
 ``OfflineRLAlgorithm`` in this repo (e.g. ``BC``) rather than the reference's
@@ -25,17 +45,20 @@ than hardcoding a fixed step count.
 from __future__ import annotations
 
 import copy
+import dataclasses
 from typing import Any, Literal, Optional, Sequence
 
 import torch
 import torch.nn as nn
-from gymnasium import spaces
 
 from rl_garden.algorithms.offline import OfflineEnvSpec, OfflineRLAlgorithm
 from rl_garden.buffers.chunked_dataset import load_h5_dataset_as_chunks
 from rl_garden.common.logger import Logger
+from rl_garden.common.obs_utils import index_obs
 from rl_garden.common.optim import ScheduleType, make_lr_scheduler, make_optimizer
-from rl_garden.networks import Activation, KernelInit
+from rl_garden.encoders.config import EncoderConfig
+from rl_garden.networks import Activation, DiffusionMLP, KernelInit
+from rl_garden.observations import ObsGroups
 from rl_garden.policies.diffusion_policy import DiffusionPolicy
 
 
@@ -52,6 +75,9 @@ class _EMA:
 
 class DiffusionBC(OfflineRLAlgorithm):
     _compatible_checkpoint_algorithms = ("DiffusionBC",)
+    # See module docstring: no critic, so extract_actor_features must never
+    # stop-gradient.
+    encoder_sharing = "shared"
 
     def __init__(
         self,
@@ -70,6 +96,11 @@ class DiffusionBC(OfflineRLAlgorithm):
         randn_clip_value: float = 10.0,
         final_action_clip_value: Optional[float] = None,
         min_sampling_denoising_std: float = 0.1,
+        net_cls: type[nn.Module] = DiffusionMLP,
+        net_kwargs: Optional[dict[str, Any]] = None,
+        encoder_config: Optional[EncoderConfig] = None,
+        obs_groups: Optional[ObsGroups] = None,
+        image_augmentation_seed: Optional[int] = None,
         actor_lr: float = 1e-3,
         weight_decay: float = 1e-6,
         lr_schedule: Literal["constant", "linear_warmup", "warmup_cosine"] = "constant",
@@ -110,10 +141,9 @@ class DiffusionBC(OfflineRLAlgorithm):
             save_replay_buffer=False,
             save_final_checkpoint=save_final_checkpoint,
         )
-        if not isinstance(self.env.single_observation_space, spaces.Box):
-            raise TypeError(
-                "DiffusionBC is state-only (Box observations); vision is out of scope."
-            )
+        self.encoder_config = encoder_config
+        self.obs_groups = obs_groups
+        self._image_augmentation_seed = image_augmentation_seed
         if grad_clip_norm is not None and grad_clip_norm <= 0:
             raise ValueError(
                 f"grad_clip_norm must be positive or None, got {grad_clip_norm}."
@@ -132,6 +162,8 @@ class DiffusionBC(OfflineRLAlgorithm):
         self.randn_clip_value = randn_clip_value
         self.final_action_clip_value = final_action_clip_value
         self.min_sampling_denoising_std = min_sampling_denoising_std
+        self.net_cls = net_cls
+        self.net_kwargs = dict(net_kwargs) if net_kwargs is not None else None
         self.actor_lr = actor_lr
         self.weight_decay = weight_decay
         self.lr_schedule: ScheduleType = lr_schedule
@@ -164,7 +196,7 @@ class DiffusionBC(OfflineRLAlgorithm):
         return ("actor_optimizer",)
 
     def _checkpoint_metadata(self) -> dict[str, Any]:
-        return {
+        meta = {
             **super()._checkpoint_metadata(),
             "horizon_steps": self.horizon_steps,
             "cond_steps": self.cond_steps,
@@ -172,7 +204,23 @@ class DiffusionBC(OfflineRLAlgorithm):
             "mlp_dims": self.mlp_dims,
             "activation_fn": self.activation_fn,
             "residual_style": self.residual_style,
+            "net_cls": self.net_cls.__name__,
+            "net_kwargs": self.net_kwargs,
+            "encoder_sharing": self.encoder_sharing,
+            "encoder_sharing_origin": self.encoder_sharing_origin,
+            "encoder_config": (
+                dataclasses.asdict(self.encoder_config) if self.encoder_config is not None else None
+            ),
+            "obs_groups": (
+                dataclasses.asdict(self.obs_groups) if self.obs_groups is not None else None
+            ),
+            # DiffusionBC has no critic -- always None, unconditionally present
+            # per the shared observation-encoder checkpoint-metadata shape
+            # (see rl_garden/algorithms/_observation.py).
+            "critic_encoder_config": None,
+            "image_augmentation_seed": self._image_augmentation_seed,
         }
+        return meta
 
     def _extra_checkpoint_state(self) -> dict[str, Any]:
         return {
@@ -196,9 +244,14 @@ class DiffusionBC(OfflineRLAlgorithm):
     # --- model / data setup ---
 
     def _setup_model(self) -> None:
+        extractor_kwargs = self._policy_extractor_kwargs(
+            self.env.single_observation_space,
+            augmentation_seed=self._image_augmentation_seed,
+        )
         self.policy = DiffusionPolicy(
             observation_space=self.env.single_observation_space,
             action_space=self.env.single_action_space,
+            actor_extractor=extractor_kwargs["actor_extractor"],
             horizon_steps=self.horizon_steps,
             cond_steps=self.cond_steps,
             denoising_steps=self.denoising_steps,
@@ -211,6 +264,9 @@ class DiffusionBC(OfflineRLAlgorithm):
             randn_clip_value=self.randn_clip_value,
             final_action_clip_value=self.final_action_clip_value,
             min_sampling_denoising_std=self.min_sampling_denoising_std,
+            net_cls=self.net_cls,
+            net_kwargs=self.net_kwargs,
+            encoder_sharing=extractor_kwargs["encoder_sharing"],
         ).to(self.device)
         self.ema_policy = copy.deepcopy(self.policy)
         for p in self.ema_policy.parameters():
@@ -241,6 +297,17 @@ class DiffusionBC(OfflineRLAlgorithm):
             device=self.device,
             num_traj=self.num_traj,
         )
+        # load_h5_dataset_as_chunks always returns a Dict now (state-only =
+        # {"state": Tensor}) -- match it against the env's own observation
+        # space (always Dict; boundary normalization is unconditional).
+        expected_keys = set(self.env.single_observation_space.spaces.keys())
+        dataset_keys = set(obs_history.keys())
+        if dataset_keys != expected_keys:
+            raise TypeError(
+                "DiffusionBC requires a Dict-shaped H5 dataset (nested "
+                f"obs/<key> groups) matching the env's keys; got "
+                f"{sorted(dataset_keys)}, expected {sorted(expected_keys)}."
+            )
         self._obs_history = obs_history
         self._action_chunks = action_chunks
         self._dataset_size = action_chunks.shape[0]
@@ -258,7 +325,7 @@ class DiffusionBC(OfflineRLAlgorithm):
             idx = torch.randint(
                 0, self._dataset_size, (self.batch_size,), device=self._action_chunks.device
             )
-            obs_history = self._obs_history[idx]
+            obs_history = index_obs(self._obs_history, idx)
             action_chunk = self._action_chunks[idx]
 
             self.actor_optimizer.zero_grad(set_to_none=True)
