@@ -6,6 +6,7 @@ Current state: [`../CURRENT_STATE.md`](../CURRENT_STATE.md)
 
 ## Recent memories
 
+- [Generation-2 offline dynamic queue launched](2026-09-15_006_generation2-offline-queue-launched.md)
 - [Generation-2 offline queue safeguard](2026-09-15_005_generation2-offline-queue-safeguard.md)
 - [Corrected WSRL initializer started](2026-09-15_004_corrected-wsrl-initializer-started.md)
 - [Formal root generation layout](2026-09-15_003_formal-root-generation-layout.md)
@@ -14,6 +15,7 @@ Current state: [`../CURRENT_STATE.md`](../CURRENT_STATE.md)
 
 | Seq | Date | Topic | Status | File |
 |---|---|---|---|---|
+| 006 | 2026-09-15 | Generation-2 offline dynamic queue launched | partial | [memory](2026-09-15_006_generation2-offline-queue-launched.md) |
 | 005 | 2026-09-15 | Generation-2 offline queue safeguard | completed | [memory](2026-09-15_005_generation2-offline-queue-safeguard.md) |
 | 010 | 2026-09-14 | lancet-upstream-sync smoke | completed | [memory](2026-09-14_010_lancet-upstream-sync-antmaze-medium-play-v2-smoke.md) |
 | 009 | 2026-09-14 | lancet-upstream-sync smoke | completed | [memory](2026-09-14_009_lancet-upstream-sync-antmaze-medium-play-v2-smoke.md) |

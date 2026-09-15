@@ -68,6 +68,9 @@ target critic, CQL/Cal-QL, and REDQ target semantics remain upstream WSRL.
   `/data/lancet/runs/formal/FORMAL_IDENTITY_V2.json`.
 - Corrected WSRL seed-0 initializer is running on physical GPU 0 in tmux
   `lancet-v2-wsrl-init-s0`; archive timestamp `20260915_105013`, target 1M.
+- The generation-2 lifecycle controller `lancet-v2-offline-queue` has started
+  seed 1 on GPU 1 and seed 2 on GPU 2. Seeds 3 and 4 remain queued because no
+  additional non-reserved GPU passed its stable capacity gate.
 - Generation-1 physical roots are now `runs/formal_v1` and
   `checkpoints/formal_v1`; their frozen metadata was not rewritten.
 - Old checkpoints must never initialize generation-2 scientific runs.
