@@ -11,7 +11,8 @@ identity freeze are complete.
 
 ## P1 — seed-0 online sanity
 
-1. Run the corrected 1M WSRL seed-0 initializer and 100-episode diagnostic.
+1. Let the running corrected 1M WSRL seed-0 initializer finish, validate it,
+   and run the 100-episode diagnostic.
 2. Run WSRL seed-0 for the frozen 50k–100k online sanity horizon.
 3. Only if the corrected baseline is stable, run Lancet seed 0 from the same
    initializer, then begin the five-seed generation-2 pipeline.
@@ -26,4 +27,4 @@ identity freeze are complete.
 
 ## Current decision
 
-`UPSTREAM MERGE COMPLETE - NEW MAIN ACTIVE - BASELINE VALIDATION PENDING`.
+`UPSTREAM MERGE COMPLETE - NEW MAIN ACTIVE - BASELINE VALIDATION RUNNING`.

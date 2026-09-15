@@ -3,6 +3,7 @@
 Last updated: 2026-09-15 CST
 Branch: `main`
 Scientific commit: `5ab30530e534a24a0082b76d8c8ab08c5132ac0a`
+Infrastructure commit used by Stage A: `d7e9ad0470d60e92829cfc8c63d3b33ee8caa27a`
 
 ## Current objective
 
@@ -62,7 +63,9 @@ target critic, CQL/Cal-QL, and REDQ target semantics remain upstream WSRL.
 
 - Generation 1: `SUPERSEDED_PRE_UPSTREAM_SYNC`, retained unchanged for history.
 - Generation 2: identity frozen at
-  `/data/lancet/runs/formal/FORMAL_IDENTITY_V2.json`; no run has started.
+  `/data/lancet/runs/formal/FORMAL_IDENTITY_V2.json`.
+- Corrected WSRL seed-0 initializer is running on physical GPU 0 in tmux
+  `lancet-v2-wsrl-init-s0`; archive timestamp `20260915_105013`, target 1M.
 - Generation-1 physical roots are now `runs/formal_v1` and
   `checkpoints/formal_v1`; their frozen metadata was not rewritten.
 - Old checkpoints must never initialize generation-2 scientific runs.
@@ -85,9 +88,9 @@ target critic, CQL/Cal-QL, and REDQ target semantics remain upstream WSRL.
 
 ## Immediate next steps
 
-1. Verify the archive/lifecycle launcher writes only to `formal_v2`.
-2. Archive and launch corrected WSRL seed-0 1M offline initializer only.
-3. Validate finite state/reload and run the 100-episode diagnostic after it completes.
+1. Monitor the corrected initializer at low frequency; do not start online early.
+2. At completion, validate finite state/reload/checkpoint hash and archive analysis.
+3. Run the frozen 100-episode diagnostic, then decide the WSRL online sanity gate.
 
 ## Read next
 

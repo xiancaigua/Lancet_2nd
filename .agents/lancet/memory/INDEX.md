@@ -6,6 +6,7 @@ Current state: [`../CURRENT_STATE.md`](../CURRENT_STATE.md)
 
 ## Recent memories
 
+- [Corrected WSRL initializer started](2026-09-15_004_corrected-wsrl-initializer-started.md)
 - [Formal root generation layout](2026-09-15_003_formal-root-generation-layout.md)
 - [Main promotion and formal V2 freeze](2026-09-15_002_main-promotion-formal-v2-freeze.md)
 - [Upstream Ruff baseline](2026-09-15_001_upstream-ruff-baseline.md)
