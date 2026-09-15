@@ -7,9 +7,11 @@ Infrastructure commit used by Stage A: `d7e9ad0470d60e92829cfc8c63d3b33ee8caa27a
 
 ## Current objective
 
-Run only the corrected WSRL seed-0 baseline-validation initializer under the
-new frozen generation-2 identity. Generation-1 formal evidence is superseded
-and no training worker from it is active.
+Run the corrected WSRL generation-2 offline initializers under the frozen
+identity. Seed 0 remains the Stage-A baseline-validation run; seeds 1--4 may
+use the external lifecycle queue but cannot auto-launch online branches before
+the corrected-baseline gate is explicitly approved. Generation-1 evidence is
+superseded and no worker from it is active.
 
 ## Repository and runtime
 
@@ -75,7 +77,7 @@ target critic, CQL/Cal-QL, and REDQ target semantics remain upstream WSRL.
 1. Upstream carries 2,610 repository-wide Ruff findings; they are baseline debt,
    not integration regressions.
 2. Legacy optional D4RL/headless warnings remain non-blocking for AntMaze.
-3. Corrected WSRL seed-0 must pass Stage A/B before any multi-seed formal launch.
+3. Corrected WSRL seed-0 must pass Stage A/B before any formal online launch.
 
 ## Active decisions
 
@@ -85,11 +87,14 @@ target critic, CQL/Cal-QL, and REDQ target semantics remain upstream WSRL.
 - Primary metric remains Adaptation AUC 0–50k.
 - Promotion uses a no-new-lint-regressions gate against clean upstream rather
   than mass-editing unrelated lint debt.
+- GPU 4 is permanently excluded from Lancet scheduling while reserved by
+  another user. The lifecycle queue has an explicit opt-in for post-initializer
+  online preparation; its default is disabled.
 
 ## Immediate next steps
 
-1. Monitor the corrected initializer at low frequency; do not start online early.
-2. At completion, validate finite state/reload/checkpoint hash and archive analysis.
+1. Monitor all queued/running initializers at low frequency; do not start online early.
+2. At seed-0 completion, validate finite state/reload/checkpoint hash and archive analysis.
 3. Run the frozen 100-episode diagnostic, then decide the WSRL online sanity gate.
 
 ## Read next

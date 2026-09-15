@@ -136,3 +136,33 @@ def test_exclude_gpu_persists_policy_and_audit_event(tmp_path):
     state = json.loads(state_path.read_text())
     assert state["settings"]["excluded_gpu_ids"] == [4]
     assert state["policy_events"][-1]["gpu_id"] == 4
+
+
+def test_initializer_completion_defers_online_without_explicit_opt_in(tmp_path, monkeypatch):
+    state_path = tmp_path / "state.json"
+    lifecycle._atomic_json(
+        state_path,
+        {
+            "settings": {"auto_online_after_initializer": False},
+            "jobs": [
+                {
+                    "job_id": "initializer-seed-0",
+                    "stage": "initializer",
+                    "status": "completed",
+                    "validation_status": "pending",
+                    "seed": 0,
+                    "archive": str(tmp_path / "archive"),
+                }
+            ],
+        },
+    )
+    monkeypatch.setattr(lifecycle, "_validate_initializer", lambda _path, _job_id: True)
+    prepared = []
+    monkeypatch.setattr(lifecycle, "_prepare_online", lambda _path, job_id: prepared.append(job_id))
+
+    lifecycle._postprocess(state_path)
+
+    state = json.loads(state_path.read_text())
+    job = state["jobs"][0]
+    assert prepared == []
+    assert job["online_launch_deferred_reason"] == "scheduler policy requires explicit baseline gate approval"

@@ -705,6 +705,14 @@ def _postprocess(state_path: Path) -> None:
     ]
     for job in pending:
         if _validate_initializer(state_path, job["job_id"]):
+            state_after_validation = json.loads(state_path.read_text(encoding="utf-8"))
+            auto_online = bool(state_after_validation["settings"].get("auto_online_after_initializer", False))
+            if not auto_online:
+                with _locked_state(state_path) as current:
+                    target = next(item for item in current["jobs"] if item["job_id"] == job["job_id"])
+                    target["online_launch_deferred_at"] = _now()
+                    target["online_launch_deferred_reason"] = "scheduler policy requires explicit baseline gate approval"
+                continue
             try:
                 _prepare_online(state_path, job["job_id"])
             except Exception as exc:  # noqa: BLE001 - block rather than launch.
@@ -908,6 +916,10 @@ def _initialize(args) -> int:
             "settle_seconds": args.settle_seconds,
             "max_lancet_jobs_per_gpu": 1,
             "excluded_gpu_ids": sorted(set(args.exclude_gpu)),
+            # Formal online branches require the corrected WSRL baseline gate.
+            # Keep them explicitly deferred unless a future controller is
+            # intentionally initialized with this opt-in switch.
+            "auto_online_after_initializer": args.auto_online_after_initializer,
         },
         "jobs": jobs,
         "batch_notifications": {},
@@ -996,6 +1008,11 @@ def main() -> int:
     init.add_argument("--max-foreign-memory-mib", type=int, default=DEFAULT_MAX_FOREIGN_MIB)
     init.add_argument("--settle-samples", type=int, default=DEFAULT_SETTLE_SAMPLES)
     init.add_argument("--settle-seconds", type=int, default=DEFAULT_SETTLE_SECONDS)
+    init.add_argument(
+        "--auto-online-after-initializer",
+        action="store_true",
+        help="Explicitly permit validated initializers to prepare online branches.",
+    )
     init.add_argument(
         "--exclude-gpu",
         action="append",
