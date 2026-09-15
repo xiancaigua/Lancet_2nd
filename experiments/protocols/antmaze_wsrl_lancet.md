@@ -17,7 +17,8 @@ and migration evidence, but they are excluded from all confirmatory statistics.
 This rerun is allowed because the baseline implementation/configuration
 identity changed, not because generation-1 returns were unfavorable. Formal
 generation 2 uses only newly trained shared initializers and writes only to
-`/data/lancet/{runs,checkpoints}/formal_v2`. Old checkpoints are not compatible
+`/data/lancet/{runs,checkpoints}/formal`. Generation-1 archives are retained
+under `/data/lancet/{runs,checkpoints}/formal_v1`. Old checkpoints are not compatible
 scientific initializers for the new observation architecture.
 
 ## 1. Research question
@@ -271,8 +272,8 @@ and local RNG.
 Use generation-specific archive roots and the existing method labels:
 
 ```text
-/data/lancet/runs/formal_v2/antmaze-medium-play-v2/{wsrl,raw-residual,centered-residual,lancet}/seed_<s>/<timestamp>/
-/data/lancet/checkpoints/formal_v2/...
+/data/lancet/runs/formal/antmaze-medium-play-v2/{wsrl,raw-residual,centered-residual,lancet}/seed_<s>/<timestamp>/
+/data/lancet/checkpoints/formal/...
 ```
 
 Each process uses one explicit GPU; parallel runs require distinct verified

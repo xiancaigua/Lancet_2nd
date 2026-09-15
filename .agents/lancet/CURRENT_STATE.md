@@ -62,7 +62,9 @@ target critic, CQL/Cal-QL, and REDQ target semantics remain upstream WSRL.
 
 - Generation 1: `SUPERSEDED_PRE_UPSTREAM_SYNC`, retained unchanged for history.
 - Generation 2: identity frozen at
-  `/data/lancet/runs/formal_v2/FORMAL_IDENTITY_V2.json`; no run has started.
+  `/data/lancet/runs/formal/FORMAL_IDENTITY_V2.json`; no run has started.
+- Generation-1 physical roots are now `runs/formal_v1` and
+  `checkpoints/formal_v1`; their frozen metadata was not rewritten.
 - Old checkpoints must never initialize generation-2 scientific runs.
 
 ## Known issues

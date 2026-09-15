@@ -9,10 +9,11 @@ current Lancet on `antmaze-medium-play-v2`. The upstream-resync real smoke
 passed, but the repository-wide Ruff promotion gate is blocked. No generation-2
 initializer, baseline sanity, or formal run has started.
 
-Generation 1 under `/data/lancet/{runs,checkpoints}/formal` is permanently
+Generation 1 under `/data/lancet/{runs,checkpoints}/formal_v1` is permanently
 `SUPERSEDED_PRE_UPSTREAM_SYNC`; its controller is stopped. Generation 2 will
-use `/data/lancet/{runs,checkpoints}/formal_v2` only after integration is
-promoted and `FORMAL_IDENTITY_V2.json` is frozen.
+uses canonical `/data/lancet/{runs,checkpoints}/formal`; its
+`FORMAL_IDENTITY_V2.json` is frozen. Archived generation-1 metadata keeps its
+original absolute paths and is not rewritten.
 
 [`antmaze_wsrl_lancet_v1.md`](../experiments/protocols/antmaze_wsrl_lancet_v1.md)
 is retained only as the never-executed Lancet V1 shared-scalar protocol.
@@ -25,8 +26,8 @@ authoritative; Agent Memory and this Handoff contain summaries and indexes.
 ## Isolation and protection
 
 ```text
-/home/zhaozihan/Lancet/data/runs/{smoke,debug,formal,formal_v2}/
-/home/zhaozihan/Lancet/data/checkpoints/{smoke,debug,formal,formal_v2}/
+/home/zhaozihan/Lancet/data/runs/{smoke,debug,formal,formal_v1}/
+/home/zhaozihan/Lancet/data/checkpoints/{smoke,debug,formal,formal_v1}/
 ```
 
 The launcher validates run-type intent, generates only paths under the matching

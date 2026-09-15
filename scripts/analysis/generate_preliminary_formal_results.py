@@ -200,7 +200,7 @@ def online_curve(archive: Path, online_start: int, tag: str) -> list[tuple[int, 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--runs-root", type=Path, default=Path("/data/lancet/runs/formal_v2")
+        "--runs-root", type=Path, default=Path("/data/lancet/runs/formal")
     )
     parser.add_argument(
         "--include-superseded-generation1",
@@ -213,7 +213,7 @@ def main() -> int:
     if runs_root.name == "formal" and not args.include_superseded_generation1:
         raise SystemExit(
             "Generation-1 formal data is SUPERSEDED_PRE_UPSTREAM_SYNC. "
-            "Use /data/lancet/runs/formal_v2 (default), or pass "
+            "Use /data/lancet/runs/formal (current generation, default), or pass "
             "--include-superseded-generation1 for an explicit legacy audit."
         )
     out = args.output_dir

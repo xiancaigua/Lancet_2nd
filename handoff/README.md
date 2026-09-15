@@ -20,8 +20,9 @@ unit/regression tests, experiment archive launcher, and audits exist.
 - The revised Ruff gate passes: clean upstream and integration have identical
   normalized sets of 2,610 inherited findings, while integration-added and
   Lancet-owned Python files are clean. Main was promoted and tagged normally.
-- Generation-2 identity is frozen under `/data/lancet/runs/formal_v2/`; the
+- Generation-2 identity is frozen under `/data/lancet/runs/formal/`; the
   corrected WSRL seed-0 initializer is the next validation stage.
+- Superseded generation-1 archives are under `/data/lancet/{runs,checkpoints}/formal_v1`.
 - Generation 1 is permanently `SUPERSEDED_PRE_UPSTREAM_SYNC`; it is retained
   for debugging and migration evidence and excluded from paper statistics.
 - Current U semantics: detached REDQ action-disagreement weighting of residual
