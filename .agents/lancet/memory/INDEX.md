@@ -6,6 +6,7 @@ Current state: [`../CURRENT_STATE.md`](../CURRENT_STATE.md)
 
 ## Recent memories
 
+- [Main promotion and formal V2 freeze](2026-09-15_002_main-promotion-formal-v2-freeze.md)
 - [Upstream Ruff baseline](2026-09-15_001_upstream-ruff-baseline.md)
 
 | Seq | Date | Topic | Status | File |

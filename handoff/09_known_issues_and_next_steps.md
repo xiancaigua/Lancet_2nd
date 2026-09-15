@@ -1,20 +1,19 @@
 # Known issues and next steps
 
-## P0 — promote the validated integration branch
+## P0 — corrected baseline validation
 
 The integration branch has passed merge, Lancet/WSRL semantic parity,
 checkpoint, dataset, resolved-config, real AntMaze smoke, email, and the
 revised no-new-regressions Ruff gate. Ruff 0.16.6 reports the same normalized
 2,610 findings on clean upstream `252d1e0` and integration; integration-added
-and Lancet-owned Python files are clean. The next action is promotion without
-force push, followed by generation-2 identity freeze.
+and Lancet-owned Python files are clean. Main promotion and generation-2
+identity freeze are complete.
 
-## P1 — corrected baseline validation
+## P1 — seed-0 online sanity
 
-1. Freeze `FORMAL_IDENTITY_V2.json` and `formal_v2` roots.
-2. Run the corrected 1M WSRL seed-0 initializer and 100-episode diagnostic.
-4. Run WSRL seed-0 for the frozen 50k–100k online sanity horizon.
-5. Only if the corrected baseline is stable, run Lancet seed 0 from the same
+1. Run the corrected 1M WSRL seed-0 initializer and 100-episode diagnostic.
+2. Run WSRL seed-0 for the frozen 50k–100k online sanity horizon.
+3. Only if the corrected baseline is stable, run Lancet seed 0 from the same
    initializer, then begin the five-seed generation-2 pipeline.
 
 ## P2 — non-blocking notes
@@ -27,4 +26,4 @@ force push, followed by generation-2 identity freeze.
 
 ## Current decision
 
-`UPSTREAM MIGRATION GATES PASS - MAIN PROMOTION PENDING`.
+`UPSTREAM MERGE COMPLETE - NEW MAIN ACTIVE - BASELINE VALIDATION PENDING`.

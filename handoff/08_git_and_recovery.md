@@ -3,14 +3,15 @@
 ## Audited Git state
 
 ```text
-active branch: integration/upstream-sync-20260914
-integration HEAD: 824a5de (before final continuity commit)
-main: db57e1e9e1ee6e81ffafd99b1547a96e26389df1 (unchanged)
+active branch: main
+scientific main: 5ab30530e534a24a0082b76d8c8ab08c5132ac0a
+validated integration: 5ab30530e534a24a0082b76d8c8ab08c5132ac0a
 upstream merged SHA: 252d1e0948618a0cd3675b9a05e0bcf4c29b5afb
 origin: git@github.com:xiancaigua/Lancet_2nd.git
 upstream: https://github.com/JaimeParker/rl-garden.git
 backup branch: backup/pre-upstream-sync-20260914
 backup tag: pre-upstream-sync-20260914
+sync tag: lancet-upstream-sync-20260914
 ```
 
 No token or private key is stored in Docker or these documents. The backup

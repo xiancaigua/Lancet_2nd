@@ -1,15 +1,14 @@
 # Lancet Current Agent State
 
 Last updated: 2026-09-15 CST
-Branch: `integration/upstream-sync-20260914`
-Commit: `824a5de` plus pending gate/continuity commit
+Branch: `main`
+Scientific commit: `5ab30530e534a24a0082b76d8c8ab08c5132ac0a`
 
 ## Current objective
 
-Promote the fully validated upstream integration to `main`, freeze generation-2
-formal identity, then run only the corrected WSRL seed-0 baseline-validation
-initializer. Generation-1 formal evidence is superseded and no training worker
-from it is active.
+Run only the corrected WSRL seed-0 baseline-validation initializer under the
+new frozen generation-2 identity. Generation-1 formal evidence is superseded
+and no training worker from it is active.
 
 ## Repository and runtime
 
@@ -27,7 +26,8 @@ from it is active.
 - Upstream: `252d1e0948618a0cd3675b9a05e0bcf4c29b5afb`
 - Full merge: `c1125de`
 - Backup: `backup/pre-upstream-sync-20260914` and annotated tag of the same name
-- Integration promotion gate: PASS; main promotion is pending
+- Integration promotion gate: PASS; main and origin/main are `5ab3053`
+- Sync tag: `lancet-upstream-sync-20260914`
 
 ## Lancet architecture
 
@@ -61,7 +61,8 @@ target critic, CQL/Cal-QL, and REDQ target semantics remain upstream WSRL.
 ## Formal generations
 
 - Generation 1: `SUPERSEDED_PRE_UPSTREAM_SYNC`, retained unchanged for history.
-- Generation 2: not yet created; no initializer or online run has started.
+- Generation 2: identity frozen at
+  `/data/lancet/runs/formal_v2/FORMAL_IDENTITY_V2.json`; no run has started.
 - Old checkpoints must never initialize generation-2 scientific runs.
 
 ## Known issues
@@ -82,10 +83,9 @@ target critic, CQL/Cal-QL, and REDQ target semantics remain upstream WSRL.
 
 ## Immediate next steps
 
-1. Commit and push the final integration gate evidence.
-2. Recheck origin/main, promote integration normally, and tag the sync.
-3. Freeze `FORMAL_IDENTITY_V2.json` and formal_v2 roots.
-4. Archive and launch corrected WSRL seed-0 1M offline initializer only.
+1. Verify the archive/lifecycle launcher writes only to `formal_v2`.
+2. Archive and launch corrected WSRL seed-0 1M offline initializer only.
+3. Validate finite state/reload and run the 100-episode diagnostic after it completes.
 
 ## Read next
 

@@ -2,9 +2,9 @@
 
 Last audited: 2026-09-15
 
-Active migration branch: `integration/upstream-sync-20260914`
+Active branch: `main`
 
-Current main: `db57e1e9e1ee6e81ffafd99b1547a96e26389df1` (unchanged)
+Current scientific main: `5ab30530e534a24a0082b76d8c8ab08c5132ac0a`
 
 ## Project goal and current state
 
@@ -19,7 +19,9 @@ unit/regression tests, experiment archive launcher, and audits exist.
   continuation, focused regressions, real AntMaze smoke, and SMTP test.
 - The revised Ruff gate passes: clean upstream and integration have identical
   normalized sets of 2,610 inherited findings, while integration-added and
-  Lancet-owned Python files are clean. Main promotion is the next step.
+  Lancet-owned Python files are clean. Main was promoted and tagged normally.
+- Generation-2 identity is frozen under `/data/lancet/runs/formal_v2/`; the
+  corrected WSRL seed-0 initializer is the next validation stage.
 - Generation 1 is permanently `SUPERSEDED_PRE_UPSTREAM_SYNC`; it is retained
   for debugging and migration evidence and excluded from paper statistics.
 - Current U semantics: detached REDQ action-disagreement weighting of residual
