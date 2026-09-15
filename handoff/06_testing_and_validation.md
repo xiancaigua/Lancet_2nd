@@ -3,7 +3,35 @@
 Only commands actually run are listed. Current Lancet unit/regression evidence
 is kept separate from historical Lancet V1 runtime evidence.
 
-## Current implementation checks (2026-09-09)
+## Upstream-resync gates (2026-09-15)
+
+| Gate | Result |
+|---|---|
+| focused migration-owned Ruff | PASS |
+| no-new-regressions Ruff vs clean upstream | PASS: both have the same normalized 2,610 findings |
+| integration-added and Lancet-owned Ruff | PASS: zero findings |
+| current/legacy Lancet and infrastructure | 71 passed |
+| WSRL/SAC/CQL/CalQL/checkpoint | 174 passed |
+| observation/replay/off2on | 195 passed |
+| exact save/load next-step continuation | PASS |
+| old/new AntMaze semantic fingerprint | PASS |
+| corrected WSRL/Raw/Centered/Lancet resolved parity | PASS |
+| final real AntMaze migration smoke | PASS |
+
+The final smoke archives are `20260914_202534` (shared WSRL initializer) and
+`20260914_204852` (Lancet). The latter records seven residual updates, finite
+U/Delta/Q/loss diagnostics, three complete 1000-step evaluations, and a
+reloadable final checkpoint. See
+`experiments/migrations/upstream_sync_20260914/real_antmaze_smoke_report.md`.
+No corrected formal initializer was launched.
+
+The Ruff comparison used Ruff 0.16.6 on clean upstream `252d1e0` and the
+integration worktree. It normalizes each finding by repository-relative path,
+rule, and message. One integration-only `UP045` was corrected; the final
+multisets and rule counts are identical. See
+`experiments/migrations/upstream_sync_20260914/ruff_baseline_comparison.json`.
+
+## Generation-1 implementation checks (historical, 2026-09-09)
 
 | Command | Result |
 |---|---|
@@ -66,11 +94,12 @@ Evidence lives in each archive's `metrics/summary.json`,
 `metrics/scalars.json`, and `analysis.md`; paired evidence is in the Lancet
 archive's `metrics/paired_comparison.{json,md}`.
 
-## Remaining validation notes
+## Generation-1 validation notes
 
 - Peak per-process CUDA memory was not collected as a scalar; no OOM occurred.
 - Kitchen is not fetched and is not a blocker for the first AntMaze study.
-- Formal initializer seeds 0/1 are running; seeds 2/3/4 are queued.
+- The generation-1 controller and jobs are stopped and superseded; none may be
+  restarted or mixed with generation 2.
 
 ## Formal pre-online audit (2026-09-11)
 

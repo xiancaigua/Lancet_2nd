@@ -18,6 +18,10 @@ authoritative record. This page is a human-readable index only.
 | 20260908_123802 | finished | Lancet V1 shared-scalar residual updated/logged/checkpointed/reloaded; finite losses | `/home/zhaozihan/Lancet/data/runs/smoke/antmaze-medium-play-v2/lancet/seed_0/20260908_123802` |
 | 20260909_215057 | finished | real 1M data; shared checkpoint finite/reload passed | `/home/zhaozihan/Lancet/data/runs/smoke/antmaze-medium-play-v2/wsrl-lancet-initializer/seed_0/20260909_215057` |
 | 20260909_215436 | finished | current Lancet residual updated; finite/reload passed | `/home/zhaozihan/Lancet/data/runs/smoke/antmaze-medium-play-v2/lancet/seed_0/20260909_215436` |
+| 20260914_202534 | finished | return code 0 | `/home/zhaozihan/Lancet/data/runs/smoke/antmaze-medium-play-v2/wsrl-upstream-sync-initializer/seed_0/20260914_202534` |
+| 20260914_203538 | finished | return code 0 | `/home/zhaozihan/Lancet/data/runs/smoke/antmaze-medium-play-v2/lancet-upstream-sync/seed_0/20260914_203538` |
+| 20260914_204623 | finished | return code 0 | `/home/zhaozihan/Lancet/data/runs/smoke/antmaze-medium-play-v2/lancet-upstream-sync/seed_0/20260914_204623` |
+| 20260914_204852 | finished | return code 0 | `/home/zhaozihan/Lancet/data/runs/smoke/antmaze-medium-play-v2/lancet-upstream-sync/seed_0/20260914_204852` |
 <!-- smoke-rows -->
 
 ## Debug

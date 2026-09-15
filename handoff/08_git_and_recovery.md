@@ -3,18 +3,20 @@
 ## Audited Git state
 
 ```text
-branch: main
-commit: 477abdac2f1e297c6ede82aafde20ce90b65de4b
+active branch: integration/upstream-sync-20260914
+integration HEAD: 824a5de (before final continuity commit)
+main: db57e1e9e1ee6e81ffafd99b1547a96e26389df1 (unchanged)
+upstream merged SHA: 252d1e0948618a0cd3675b9a05e0bcf4c29b5afb
 origin: git@github.com:xiancaigua/Lancet_2nd.git
 upstream: https://github.com/JaimeParker/rl-garden.git
-SSH auth: authenticated as xiancaigua
-GitHub CLI: not installed
+backup branch: backup/pre-upstream-sync-20260914
+backup tag: pre-upstream-sync-20260914
 ```
 
-No token or private key is stored in Docker or these documents. Do not change
-identity/remotes or push without explicit scope. At handoff, consolidation
-changes are intentionally uncommitted and must be reviewed separately from
-unrelated work.
+No token or private key is stored in Docker or these documents. The backup
+branch/tag are pushed. The migration gate report now passes under the verified
+no-new-lint-regressions policy. Promote integration only through an ordinary
+fast-forward or merge; never force push.
 
 ## Rebuild the runtime
 

@@ -1,59 +1,30 @@
 # Known issues and next steps
 
-## P0 — initializer completion gate
+## P0 — promote the validated integration branch
 
-The implementation, current-method tiny smoke, paired 20k pilot, checkpoint
-reload, and finite diagnostics passed. Formal protocol and identity are frozen.
-Five 1M shared initializer archives are active or dynamically queued; before
-each seed's online work:
+The integration branch has passed merge, Lancet/WSRL semantic parity,
+checkpoint, dataset, resolved-config, real AntMaze smoke, email, and the
+revised no-new-regressions Ruff gate. Ruff 0.16.6 reports the same normalized
+2,610 findings on clean upstream `252d1e0` and integration; integration-added
+and Lancet-owned Python files are clean. The next action is promotion without
+force push, followed by generation-2 identity freeze.
 
-1. Let seeds 0–4 finish without score-based stopping or reruns.
-2. Validate update count, finite model/optimizer state, checkpoint hash, and reload.
-3. Verify seed-matched shared-fork base-state equality and Lancet zero correction.
-4. Let the lifecycle controller prepare the WSRL/Lancet pair only after both
-   validation and shared-lineage reload checks pass.
+## P1 — corrected baseline validation
 
-Formal online training remains unstarted until these gates pass.
+1. Freeze `FORMAL_IDENTITY_V2.json` and `formal_v2` roots.
+2. Run the corrected 1M WSRL seed-0 initializer and 100-episode diagnostic.
+4. Run WSRL seed-0 for the frozen 50k–100k online sanity horizon.
+5. Only if the corrected baseline is stable, run Lancet seed 0 from the same
+   initializer, then begin the five-seed generation-2 pipeline.
 
-## P1 — benchmark operations
+## P2 — non-blocking notes
 
-1. Use the now-verified common actual endpoint and adaptation-coordinate AUC
-   tooling; the debug pilot reached only adaptation step 14,976, not 50k.
-2. Schedule each paired WSRL/Lancet seed immediately after that seed's
-   initializer/fork validation; all five initializers need not finish first.
-3. Schedule Raw/Centered
-   component ablations afterward without outcome-based selection.
-
-## P2 — empirical research questions
-
-- Whether replay-action supervision plus action centering approximates the
-  oracle local-action correction sufficiently.
-- Whether REDQ U weighting improves Centered Residual.
-- Whether K=8, sigma=.1, and the 50k active window transfer beyond
-  `antmaze-medium-play-v2`.
-- Optional action-wise rank/variation diagnostics for mechanism analysis.
-
-These are experiment questions, not invitations to change the frozen objective
-after seeing results.
-
-## Non-blocking environment notes
-
-- D4RL import emits legacy Gym/optional-backend warnings; AntMaze data/env
-  audits passed.
-- Kitchen dataset validation is not required for the first AntMaze benchmark.
-- Long runs must use Host tmux/scheduler around the archive launcher.
-- The pilot did not log peak per-process CUDA memory. Live initializers use
-  about 5,564 MiB steady-state; the gate adds an 8 GiB safety margin and still
-  checks utilization, foreign processes, and the GPU lock.
-- WSRL and Lancet both scored 0 throughout this short pilot; this is not a
-  failure of the stability gate and provides no performance claim.
+- D4RL optional Flow/CARLA/GymBullet and headless GLFW warnings remain benign
+  for the audited AntMaze path.
+- Kitchen is not a first-stage AntMaze blocker.
+- GPU 4 remains reserved for another user unless explicitly released.
+- Generation-1 results and checkpoints are historical/debug evidence only.
 
 ## Current decision
 
-The implementation/review gates passed at pushed algorithm commit `6281763`.
-Initializer seeds 0/1 continue unchanged; old fixed waiters for 2/3/4 were
-retired before any update and are now in the active dynamic queue. The first
-stable gate pass found no safe additional GPU, so no managed worker was
-started.
-WSRL and Lancet online logging are now both TensorBoard; no scientific setting
-changed.
+`UPSTREAM MIGRATION GATES PASS - MAIN PROMOTION PENDING`.

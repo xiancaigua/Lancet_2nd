@@ -6,8 +6,14 @@ Current state: [`../CURRENT_STATE.md`](../CURRENT_STATE.md)
 
 ## Recent memories
 
+- [Upstream Ruff baseline](2026-09-15_001_upstream-ruff-baseline.md)
+
 | Seq | Date | Topic | Status | File |
 |---|---|---|---|---|
+| 010 | 2026-09-14 | lancet-upstream-sync smoke | completed | [memory](2026-09-14_010_lancet-upstream-sync-antmaze-medium-play-v2-smoke.md) |
+| 009 | 2026-09-14 | lancet-upstream-sync smoke | completed | [memory](2026-09-14_009_lancet-upstream-sync-antmaze-medium-play-v2-smoke.md) |
+| 008 | 2026-09-14 | lancet-upstream-sync smoke | partial | [memory](2026-09-14_008_lancet-upstream-sync-antmaze-medium-play-v2-smoke.md) |
+| 007 | 2026-09-14 | wsrl-upstream-sync-initializer smoke | completed | [memory](2026-09-14_007_wsrl-upstream-sync-initializer-antmaze-medium-play-v2-smoke.md) |
 | 006 | 2026-09-14 | semantic and dataset validation | completed | [memory](2026-09-14_006_semantic-and-dataset-validation.md) |
 | 005 | 2026-09-14 | corrected WSRL AntMaze freeze | completed | [memory](2026-09-14_005_wsrl-antmaze-correction-freeze.md) |
 | 004 | 2026-09-14 | Lancet upstream API migration | completed | [memory](2026-09-14_004_lancet-upstream-api-migration.md) |
@@ -104,6 +110,14 @@ was not independently recorded.
 - [Lancet residual scaffold](2026-09-07_004_lancet-residual-scaffold.md)
 
 ### Dataset / experiments
+
+- [lancet-upstream-sync smoke](2026-09-14_010_lancet-upstream-sync-antmaze-medium-play-v2-smoke.md)
+
+- [lancet-upstream-sync smoke](2026-09-14_009_lancet-upstream-sync-antmaze-medium-play-v2-smoke.md)
+
+- [lancet-upstream-sync smoke](2026-09-14_008_lancet-upstream-sync-antmaze-medium-play-v2-smoke.md)
+
+- [wsrl-upstream-sync-initializer smoke](2026-09-14_007_wsrl-upstream-sync-initializer-antmaze-medium-play-v2-smoke.md)
 
 - [Corrected WSRL AntMaze freeze](2026-09-14_005_wsrl-antmaze-correction-freeze.md)
 - [Legacy formal generation superseded](2026-09-14_002_legacy-formal-superseded.md)

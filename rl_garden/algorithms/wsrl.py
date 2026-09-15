@@ -129,7 +129,7 @@ class WSRL(_CalQLRolloutTrainingShell):
         log_freq: int = 1_000,
         eval_freq: int = 25,
         num_eval_steps: int = 50,
-        num_eval_episodes: Optional[int] = None,
+        num_eval_episodes: int | None = None,
         checkpoint_dir: Optional[str] = None,
         checkpoint_freq: int = 0,
         save_replay_buffer: bool = False,

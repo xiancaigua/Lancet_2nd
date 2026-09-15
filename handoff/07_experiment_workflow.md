@@ -2,13 +2,17 @@
 
 ## Current protocol identities
 
-The current planned scientific entry point is
+The generation-2 planned scientific entry point is
 [`experiments/protocols/antmaze_wsrl_lancet.md`](../experiments/protocols/antmaze_wsrl_lancet.md).
 It covers WSRL, capacity-matched Raw and Centered residual ablations, and
-current Lancet on `antmaze-medium-play-v2`. Current-method tiny smoke and the
-paired seed-0 20k debug pilot passed. The five formal shared-initializer
-archives are now running or held by one dynamic queue; formal online branches
-have not started.
+current Lancet on `antmaze-medium-play-v2`. The upstream-resync real smoke
+passed, but the repository-wide Ruff promotion gate is blocked. No generation-2
+initializer, baseline sanity, or formal run has started.
+
+Generation 1 under `/data/lancet/{runs,checkpoints}/formal` is permanently
+`SUPERSEDED_PRE_UPSTREAM_SYNC`; its controller is stopped. Generation 2 will
+use `/data/lancet/{runs,checkpoints}/formal_v2` only after integration is
+promoted and `FORMAL_IDENTITY_V2.json` is frozen.
 
 [`antmaze_wsrl_lancet_v1.md`](../experiments/protocols/antmaze_wsrl_lancet_v1.md)
 is retained only as the never-executed Lancet V1 shared-scalar protocol.
@@ -21,8 +25,8 @@ authoritative; Agent Memory and this Handoff contain summaries and indexes.
 ## Isolation and protection
 
 ```text
-/home/zhaozihan/Lancet/data/runs/{smoke,debug,formal}/
-/home/zhaozihan/Lancet/data/checkpoints/{smoke,debug,formal}/
+/home/zhaozihan/Lancet/data/runs/{smoke,debug,formal,formal_v2}/
+/home/zhaozihan/Lancet/data/checkpoints/{smoke,debug,formal,formal_v2}/
 ```
 
 The launcher validates run-type intent, generates only paths under the matching
@@ -94,7 +98,7 @@ Nine older setup/test/download logs lacked pre-run intent/config/metadata.
 They remain preserved under `runs/legacy_unclassified/`; none was relabeled
 formal. No existing checkpoint required classification.
 
-## Lancet implementation-to-benchmark gates
+## Generation-1 implementation-to-benchmark history
 
 The required order is:
 
@@ -103,17 +107,16 @@ The required order is:
 3. archived seed-0 20k shared initializer and paired online pilot (done);
 4. evidence-based checkpoint/scalar/paired-AUC analysis (done);
 5. accept the frozen implementation review and push the clean formal commit (done);
-6. run and validate five archived 1M shared offline initializers (running/queued);
-7. after each seed validates, prepare its shared-fork WSRL/Lancet online pair
-   immediately; different seeds need not wait for all initializers.
+6. generation-1 initializers and four online pairs completed, then the whole
+   generation was superseded by the upstream baseline correction.
 
 The initializer's configured `utd=4` does not invoke online high-UTD grouping:
 the offline runner deliberately calls one gradient step, which is handled as
 one full-batch remainder update by `SACCore.train()`.
 
-## Formal lifecycle controller
+## Retired generation-1 lifecycle controller
 
-`scripts/experiments/run_training.py` is an external wrapper around archived
+`scripts/experiments/run_training.py` was the generation-1 external wrapper around archived
 commands. Its local state is
 `/data/lancet/runs/formal/.lifecycle/formal_pipeline.json`. It attaches to
 pre-existing seed 0/1 processes, queues seed 2–4 without allocating CUDA state,
@@ -122,9 +125,8 @@ and treats SMTP failures as non-fatal infrastructure warnings. A completed
 initializer must pass finite checkpoint and WSRL/Lancet reload checks before
 the controller prepares that seed's online pair; failures become `blocked`.
 
-The formal algorithm identity remains commit `6281763`; scheduler/email/config
-logging changes use a separate infrastructure commit recorded in new archives.
-WSRL and Lancet online now both use TensorBoard and final checkpoint saving.
-Their resolved base training values were rechecked equal.
+The generation-1 algorithm identity remains commit `6281763` for historical
+audit only. Do not restart its controller. Generation-2 orchestration must be
+refrozen against the promoted upstream-resync main and new formal identity.
 
 Do not run the Lancet V1 pilot as a substitute for current Lancet validation.

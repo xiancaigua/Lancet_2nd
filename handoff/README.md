@@ -1,7 +1,10 @@
 # Lancet Engineering Handoff
 
-Last audited: 2026-09-10
-Branch/implementation commit: `main` / `991991d1e6e77fbe42b95d2cc8a82faa376601b8`
+Last audited: 2026-09-15
+
+Active migration branch: `integration/upstream-sync-20260914`
+
+Current main: `db57e1e9e1ee6e81ffafd99b1547a96e26389df1` (unchanged)
 
 ## Project goal and current state
 
@@ -10,14 +13,19 @@ WSRL implementation. The persistent CUDA/D4RL runtime, one-checkout bind-mount
 model, AntMaze dataset, current Lancet implementation, historical Lancet V1,
 unit/regression tests, experiment archive launcher, and audits exist.
 
-- Completed: runtime, D4RL/MuJoCo, GPU/mount validation, current Lancet,
-  continuity/archival tooling, current-method tiny smoke, and the paired
-  seed-0 20k stability gate.
-- Partial: formal configs/protocol and implementation review are frozen; the
-  formal commit/hash manifest and seed-specific checkpoint hashes are next.
+- Completed on the integration branch: full merge of upstream `252d1e0`,
+  Lancet Dict-observation/policy migration, corrected WSRL AntMaze configs,
+  resolved parity, dataset semantic comparison, numerical parity, checkpoint
+  continuation, focused regressions, real AntMaze smoke, and SMTP test.
+- The revised Ruff gate passes: clean upstream and integration have identical
+  normalized sets of 2,610 inherited findings, while integration-added and
+  Lancet-owned Python files are clean. Main promotion is the next step.
+- Generation 1 is permanently `SUPERSEDED_PRE_UPSTREAM_SYNC`; it is retained
+  for debugging and migration evidence and excluded from paper statistics.
 - Current U semantics: detached REDQ action-disagreement weighting of residual
   fitting. There is intentionally no separate U loss or prediction target.
-- Not started: formal or multi-seed benchmark.
+- Not started: corrected generation-2 initializer, baseline sanity, Lancet
+  sanity, or formal v2.
 
 ## Read in this order
 

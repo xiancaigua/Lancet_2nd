@@ -1,0 +1,24 @@
+{
+  "ruff_version": "0.16.6",
+  "normalization": [
+    "repository_relative_path",
+    "rule_code",
+    "message"
+  ],
+  "upstream": {
+    "commit": "252d1e0948618a0cd3675b9a05e0bcf4c29b5afb",
+    "finding_count": 2610,
+    "raw_json_sha256": "0c9ce61ad089c944889ae2b2aa98981389ca5aac61f444cb9ea05548a2f83ae4"
+  },
+  "integration": {
+    "finding_count": 2610,
+    "raw_json_sha256": "212cff2067c903598165d8e0dcb952ffc22968e8e5347c71934f64a4b7503eec"
+  },
+  "normalized_multiset_sha256": "c9c3221b063ccb5aceb2268f4a1986701f22083652262bb92be7aa65440ea7a4",
+  "integration_only_count": 0,
+  "upstream_only_count": 0,
+  "integration_added_python_file_count": 24,
+  "integration_added_python_findings": 0,
+  "lancet_owned_findings": 0,
+  "result": "PASS"
+}
