@@ -15,6 +15,10 @@ Current state: [`../CURRENT_STATE.md`](../CURRENT_STATE.md)
 
 | Seq | Date | Topic | Status | File |
 |---|---|---|---|---|
+| 004 | 2026-09-16 | wsrl-initializer formal | completed | [memory](2026-09-16_004_wsrl-initializer-antmaze-medium-play-v2-formal.md) |
+| 003 | 2026-09-16 | wsrl-initializer formal | completed | [memory](2026-09-16_003_wsrl-initializer-antmaze-medium-play-v2-formal.md) |
+| 002 | 2026-09-16 | wsrl-initializer formal | completed | [memory](2026-09-16_002_wsrl-initializer-antmaze-medium-play-v2-formal.md) |
+| 001 | 2026-09-16 | wsrl-initializer formal | completed | [memory](2026-09-16_001_wsrl-initializer-antmaze-medium-play-v2-formal.md) |
 | 006 | 2026-09-15 | Generation-2 offline dynamic queue launched | partial | [memory](2026-09-15_006_generation2-offline-queue-launched.md) |
 | 005 | 2026-09-15 | Generation-2 offline queue safeguard | completed | [memory](2026-09-15_005_generation2-offline-queue-safeguard.md) |
 | 010 | 2026-09-14 | lancet-upstream-sync smoke | completed | [memory](2026-09-14_010_lancet-upstream-sync-antmaze-medium-play-v2-smoke.md) |
@@ -117,6 +121,14 @@ was not independently recorded.
 - [Lancet residual scaffold](2026-09-07_004_lancet-residual-scaffold.md)
 
 ### Dataset / experiments
+
+- [wsrl-initializer formal](2026-09-16_004_wsrl-initializer-antmaze-medium-play-v2-formal.md)
+
+- [wsrl-initializer formal](2026-09-16_003_wsrl-initializer-antmaze-medium-play-v2-formal.md)
+
+- [wsrl-initializer formal](2026-09-16_002_wsrl-initializer-antmaze-medium-play-v2-formal.md)
+
+- [wsrl-initializer formal](2026-09-16_001_wsrl-initializer-antmaze-medium-play-v2-formal.md)
 
 - [lancet-upstream-sync smoke](2026-09-14_010_lancet-upstream-sync-antmaze-medium-play-v2-smoke.md)
 

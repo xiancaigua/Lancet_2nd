@@ -1,6 +1,6 @@
 # Lancet Current Agent State
 
-Last updated: 2026-09-15 CST
+Last updated: 2026-09-16 11:42 CST  
 Branch: `main`
 Scientific commit: `5ab30530e534a24a0082b76d8c8ab08c5132ac0a`
 Infrastructure commit used by Stage A: `d7e9ad0470d60e92829cfc8c63d3b33ee8caa27a`
@@ -74,6 +74,16 @@ target critic, CQL/Cal-QL, and REDQ target semantics remain upstream WSRL.
 - Generation-1 physical roots are now `runs/formal_v1` and
   `checkpoints/formal_v1`; their frozen metadata was not rewritten.
 - Old checkpoints must never initialize generation-2 scientific runs.
+
+## Latest archived experiments
+
+- `20260915_121229`: wsrl-initializer formal -> finished (`/home/zhaozihan/Lancet/data/runs/formal/antmaze-medium-play-v2/wsrl-initializer/seed_3/20260915_121229`)
+
+- `20260915_121213`: wsrl-initializer formal -> finished (`/home/zhaozihan/Lancet/data/runs/formal/antmaze-medium-play-v2/wsrl-initializer/seed_1/20260915_121213`)
+
+- `20260915_121222`: wsrl-initializer formal -> finished (`/home/zhaozihan/Lancet/data/runs/formal/antmaze-medium-play-v2/wsrl-initializer/seed_2/20260915_121222`)
+
+- `20260915_105013`: wsrl-initializer formal -> finished (`/home/zhaozihan/Lancet/data/runs/formal/antmaze-medium-play-v2/wsrl-initializer/seed_0/20260915_105013`)
 
 ## Known issues
 

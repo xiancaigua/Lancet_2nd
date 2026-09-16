@@ -57,6 +57,10 @@ authoritative record. This page is a human-readable index only.
 | antmaze-medium-play-v2 | lancet | 3 | finished | not collected | `/home/zhaozihan/Lancet/data/runs/formal/antmaze-medium-play-v2/lancet/seed_3/20260912_121500` |
 | antmaze-medium-play-v2 | wsrl | 4 | finished | not collected | `/home/zhaozihan/Lancet/data/runs/formal/antmaze-medium-play-v2/wsrl/seed_4/20260913_115245` |
 | antmaze-medium-play-v2 | lancet | 4 | finished | not collected | `/home/zhaozihan/Lancet/data/runs/formal/antmaze-medium-play-v2/lancet/seed_4/20260913_115252` |
+| antmaze-medium-play-v2 | wsrl-initializer | 0 | finished | not collected | `/home/zhaozihan/Lancet/data/runs/formal/antmaze-medium-play-v2/wsrl-initializer/seed_0/20260915_105013` |
+| antmaze-medium-play-v2 | wsrl-initializer | 2 | finished | not collected | `/home/zhaozihan/Lancet/data/runs/formal/antmaze-medium-play-v2/wsrl-initializer/seed_2/20260915_121222` |
+| antmaze-medium-play-v2 | wsrl-initializer | 1 | finished | not collected | `/home/zhaozihan/Lancet/data/runs/formal/antmaze-medium-play-v2/wsrl-initializer/seed_1/20260915_121213` |
+| antmaze-medium-play-v2 | wsrl-initializer | 3 | finished | not collected | `/home/zhaozihan/Lancet/data/runs/formal/antmaze-medium-play-v2/wsrl-initializer/seed_3/20260915_121229` |
 <!-- formal-rows -->
 
 Formal initializer training started on 2026-09-11 from frozen commit `6281763`.
