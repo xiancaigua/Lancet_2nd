@@ -208,3 +208,4 @@ was not independently recorded.
 - [Shared-fork runtime gate](2026-09-11_011_shared-fork-runtime-gate.md)
 - [Final validation and launcher hardening](2026-09-08_007_final-validation-and-launcher-hardening.md)
 - [Agent continuity and handoff](2026-09-07_006_agent-continuity-and-handoff.md)
+| 001 | 2026-09-13 | 6025 formal online launch and notification repair | completed | [memory](2026-09-13_001_6025-formal-online-and-notifications.md) |

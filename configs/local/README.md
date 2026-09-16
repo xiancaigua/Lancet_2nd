@@ -9,6 +9,8 @@ training metadata, logs, Agent Memory, or Handoff.
 
 - `LANCET_EMAIL_ENABLED`: leave `false` while preparing credentials. A later
   explicitly authorized test can set it to `true` after notification code exists.
+- `LANCET_EMAIL_SUBJECT_PREFIX`: optional machine label prepended once to every
+  lifecycle subject, for example `[lancet6025]`.
 - `LANCET_SMTP_HOST`: the mail provider's SMTP server, such as
   `smtp.gmail.com` for Gmail.
 - `LANCET_SMTP_PORT`: normally `587` with STARTTLS or `465` with direct SSL.
@@ -20,9 +22,9 @@ training metadata, logs, Agent Memory, or Handoff.
 - `LANCET_SMTP_STARTTLS` / `LANCET_SMTP_SSL`: normally exactly one is `true`.
   A typical port-587 setup is `true/false`; port 465 is usually `false/true`.
 
-A standalone explicit-test SMTP sender exists, but no training lifecycle
-integration exists. Filling this file alone does not send email or alter a
-running experiment.
+The lifecycle controller sends idempotent queued, started, completed, blocked,
+and failed notifications. SMTP failure is recorded and never changes a training
+result; failed notifications with stored payloads are retried by the controller.
 
 An explicitly authorized one-message test can be run from the Host with:
 
