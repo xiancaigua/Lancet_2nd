@@ -209,3 +209,5 @@ was not independently recorded.
 - [Final validation and launcher hardening](2026-09-08_007_final-validation-and-launcher-hardening.md)
 - [Agent continuity and handoff](2026-09-07_006_agent-continuity-and-handoff.md)
 | 001 | 2026-09-13 | 6025 formal online launch and notification repair | completed | [memory](2026-09-13_001_6025-formal-online-and-notifications.md) |
+| 002 | 2026-09-13 | wsrl formal | completed | [memory](2026-09-13_002_wsrl-antmaze-medium-play-v2-formal.md) |
+| 003 | 2026-09-13 | lancet formal | completed | [memory](2026-09-13_003_lancet-antmaze-medium-play-v2-formal.md) |
